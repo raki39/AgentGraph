@@ -34,7 +34,8 @@ def create_sql_agent_executor(db: SQLDatabase, model_name: str = "gpt-4o-mini"):
             agent_type="openai-tools",
             verbose=True,
             max_iterations=MAX_ITERATIONS,
-            return_intermediate_steps=True
+            return_intermediate_steps=True,
+            top_k=40
         )
         
         logging.info(f"Agente SQL criado com sucesso usando modelo {model_name}")

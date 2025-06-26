@@ -6,47 +6,76 @@ import logging
 from typing import Dict, Any, Optional, List
 from huggingface_hub import InferenceClient
 from langchain_community.utilities import SQLDatabase
+from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 import pandas as pd
 
 from utils.config import (
-    HUGGINGFACE_API_KEY, 
-    LLAMA_MODELS, 
-    MAX_TOKENS_MAP
+    HUGGINGFACE_API_KEY,
+    OPENAI_API_KEY,
+    ANTHROPIC_API_KEY,
+    LLAMA_MODELS,
+    MAX_TOKENS_MAP,
+    OPENAI_MODELS,
+    ANTHROPIC_MODELS
 )
 
 # Cliente HuggingFace
 hf_client = InferenceClient(
-    provider="together", 
+    provider="together",
     api_key=HUGGINGFACE_API_KEY
 )
+
+# Cliente OpenAI
+openai_client = None
+if OPENAI_API_KEY:
+    openai_client = ChatOpenAI(
+        api_key=OPENAI_API_KEY,
+        temperature=0
+    )
+
+# Cliente Anthropic
+anthropic_client = None
+if ANTHROPIC_API_KEY:
+    anthropic_client = ChatAnthropic(
+        model="claude-3-5-sonnet-20241022",
+        api_key=ANTHROPIC_API_KEY,
+        temperature=0
+    )
 
 def generate_initial_context(db_sample: pd.DataFrame) -> str:
     """
     Gera contexto inicial para o modelo LLM
-    
+
     Args:
         db_sample: Amostra dos dados do banco
-        
+
     Returns:
         String com o contexto formatado
     """
     return (
-        f"Você é um assistente que gera queries SQL objetivas e eficientes. Sempre inclua LIMIT 20 nas queries. Aqui está o banco de dados:\n\n"
+        f"Você é um assistente especializado em gerar queries SQL precisas e otimizadas. Analise cuidadosamente a estrutura da tabela e a pergunta do usuário.\n\n"
         f"Exemplos do banco de dados:\n{db_sample.head().to_string(index=False)}\n\n"
         "\n***IMPORTANTE***: Detecte automaticamente o idioma da pergunta do usuário e responda sempre no mesmo idioma."
-        "\nEsta base contém os SKUs (produtos) que foram promocionados por meio de TABLOIDE OU PROMOCAO OU ANUNCIO.\n"
-        "Cada linha representa um SKU OU PRODUTO único PRESENTE NO TABLOIDE OU PROMOCAO OU ANUNCIO, incluindo sua descrição completa, os veículos OU MIDIAS de promoção utilizados e o respectivo período em que a promoção ocorreu.\n"
 
-        "\nInformações importantes:\n"
-        "- Use `LIKE '%<palavras-chave>%'` para buscas em colunas de texto.\n"
-        "- Quando o usuário mencionar uma categoria, procure nas colunas: `CATEGORIA_PRODUTO_SKU`.\n"
-        "- Se o usuário se referir a Nestle, o jeito correto de se escrever é Nestle sem acento e não Nestlé.\n"
+        "**REGRAS ESSENCIAIS**:\n"
+        "2. Para buscar texto parcial use LIKE '%termo%'.\n"
+        "3. Para NULL use IS NULL ou IS NOT NULL (nunca = NULL).\n"
+        "4. Em agregações (SUM, COUNT, AVG) use GROUP BY nas colunas não agregadas.\n"
+        "5. Para datas use formato 'YYYY-MM-DD' ou funções date() do SQLite.\n"
+        "6. Nomes de colunas devem ser EXATAMENTE como mostrado.\n"
+
+        "\n**INFORMAÇÕES IMPORTANTES**:\n"
+        "- Detecte o idioma da pergunta e responda no mesmo idioma\n"
+        "- Nunca altere nem abrevie a pergunta do usuário, sempre retorne-a no texto da resposta.\n"
+        "- Gere a query que responda precisamente o que foi perguntado\n"
         "- Você está usando um banco de dados SQLite.\n"
-        
-        "\nRetorne apenas a pergunta e a query SQL mais eficiente para entregar ao agent SQL do LangChain para gerar uma resposta para a pergunta. O formato deve ser:\n"
+
+        "\n***FORMATO DE RESPOSTA OBRIGATÓRIO***:\n"
+        "Retorne EXATAMENTE no seguinte formato (sem histórico, sem informações extras):\n"
         "\nPergunta: <pergunta do usuário>\n"
-        "\nOpção de Query SQL:\n<query SQL>"
-        "\nIdioma: <idioma>"
+        "\nQuery SQL:\n<query SQL>"
+        "\nIdioma: <idioma>\n"
     )
 
 def is_greeting(user_query: str) -> bool:
@@ -63,53 +92,89 @@ def is_greeting(user_query: str) -> bool:
     return user_query.lower().strip() in greetings
 
 async def query_with_llama(
-    user_query: str, 
-    db_sample: pd.DataFrame, 
+    user_query: str,
+    db_sample: pd.DataFrame,
     selected_model_name: str,
     recent_history: List[Dict[str, str]] = None
 ) -> tuple[Optional[str], str]:
     """
-    Consulta o modelo LLaMA para gerar instruções SQL
-    
+    Consulta o modelo LLM (HuggingFace ou OpenAI) para gerar instruções SQL
+
     Args:
         user_query: Pergunta do usuário
         db_sample: Amostra dos dados do banco
         selected_model_name: Nome do modelo selecionado
         recent_history: Histórico recente de conversas
-        
+
     Returns:
         Tupla com (resposta, model_id)
     """
     model_id = LLAMA_MODELS[selected_model_name]
     max_tokens = MAX_TOKENS_MAP.get(model_id, 512)
-    
+
     if recent_history is None:
         recent_history = []
-    
+
     initial_context = generate_initial_context(db_sample)
-    formatted_history = "\n".join(
-        [f"{msg['role'].capitalize()}: {msg['content']}" for msg in recent_history[-2:]]
-    )
-    
-    full_prompt = f"{initial_context}\n\nHistórico recente:\n{formatted_history}\n\nPergunta do usuário:\n{user_query}"
-    
-    logging.info(f"[DEBUG] Contexto enviado ao ({selected_model_name}):\n{full_prompt}\n")
-    
-    start_time = time.time()
-    
-    try:
-        response = hf_client.chat.completions.create(
-            model=model_id,
-            messages=[{"role": "system", "content": full_prompt}],
-            max_tokens=max_tokens,
-            stream=False
+
+    # Constrói o prompt com histórico apenas como contexto interno
+    if recent_history:
+        formatted_history = "\n".join(
+            [f"{msg['role'].capitalize()}: {msg['content']}" for msg in recent_history[-2:]]
         )
-        
-        llama_response = response["choices"][0]["message"]["content"]
+
+        full_prompt = (
+            f"{initial_context}\n\n"
+            f"Histórico recente:\n{formatted_history}\n\n"
+            f"Pergunta do usuário:\n{user_query}\n\n"
+        )
+    else:
+        full_prompt = f"{initial_context}\n\nPERGUNTA DO USUÁRIO:\n{user_query}"
+
+    logging.info(f"[DEBUG] Contexto enviado ao ({selected_model_name}):\n{full_prompt}\n")
+
+    start_time = time.time()
+
+    try:
+        # Verifica se é um modelo OpenAI (GPT)
+        if model_id in OPENAI_MODELS:
+            if not openai_client:
+                raise ValueError("Cliente OpenAI não configurado. Verifique a OPENAI_API_KEY.")
+
+            # Usa o cliente OpenAI
+            response = openai_client.invoke([
+                {"role": "system", "content": full_prompt}
+            ])
+
+            llm_response = response.content
+
+        # Verifica se é um modelo Anthropic (Claude)
+        elif model_id in ANTHROPIC_MODELS:
+            if not anthropic_client:
+                raise ValueError("Cliente Anthropic não configurado. Verifique a ANTHROPIC_API_KEY.")
+
+            # Usa o cliente Anthropic
+            response = anthropic_client.invoke([
+                {"role": "user", "content": full_prompt}
+            ])
+
+            llm_response = response.content
+
+        else:
+            # Usa o cliente HuggingFace
+            response = hf_client.chat.completions.create(
+                model=model_id,
+                messages=[{"role": "system", "content": full_prompt}],
+                max_tokens=max_tokens,
+                stream=False
+            )
+
+            llm_response = response["choices"][0]["message"]["content"]
+
         end_time = time.time()
-        logging.info(f"[DEBUG] Resposta do {selected_model_name} para o Agent SQL:\n{llama_response.strip()}\n[Tempo de execução: {end_time - start_time:.2f}s]\n")
-        return llama_response.strip(), model_id
-        
+        logging.info(f"[DEBUG] Resposta do {selected_model_name} para o Agent SQL:\n{llm_response.strip()}\n[Tempo de execução: {end_time - start_time:.2f}s]\n")
+        return llm_response.strip(), model_id
+
     except Exception as e:
         logging.error(f"[ERRO] Falha ao interagir com o modelo {selected_model_name}: {e}")
         return None, model_id
@@ -134,7 +199,7 @@ async def refine_response_with_llm(
         f"Pergunta do usuário:\n{user_question}\n\n"
         f"Resposta gerada pelo agente SQL:\n{sql_response}\n\n"
         "Sua tarefa é refinar, complementar e melhorar a resposta.\n" 
-        "Adicione interpretações estatísticas ou insights relevantes."
+        "Sempre mantenha a resposta original, o refinamento vem posteriormente."
     )
 
     logging.info(f"[DEBUG] Prompt enviado ao modelo de refinamento:\n{prompt}\n")

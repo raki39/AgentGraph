@@ -11,6 +11,7 @@ load_dotenv()
 # Configurações de API
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # Configurações de arquivos e diretórios
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploaded_data")
@@ -22,13 +23,33 @@ UPLOADED_CSV_PATH = os.path.join(UPLOAD_DIR, "tabela.csv")
 LLAMA_MODELS = {
     "LLaMA 70B": "meta-llama/Llama-3.3-70B-Instruct",
     "LlaMA 8B": "meta-llama/Llama-3.1-8B-Instruct",
-    "Qwen 32B": "Qwen/QwQ-32B"
+    "DeepSeek-R1": "deepseek-ai/DeepSeek-R1-0528",
+    "o3-mini": "o3-mini",
+    "GPT-4o": "gpt-4o",
+    "GPT-4o-mini": "gpt-4o-mini",
+    "Claude-3.5-Sonnet": "claude-3-5-sonnet-20241022"
 }
 
 MAX_TOKENS_MAP = {
     "meta-llama/Llama-3.3-70B-Instruct": 900,
     "meta-llama/Llama-3.1-8B-Instruct": 700,
-    "Qwen/QwQ-32B": 8192
+    "DeepSeek-R1": 8192,
+    "o3-mini": 4096,
+    "gpt-4o": 4096,
+    "gpt-4o-mini": 4096,
+    "claude-3-5-sonnet-20241022": 1024
+}
+
+# Modelos que usam OpenAI (GPT)
+OPENAI_MODELS = {
+    "o3-mini",
+    "gpt-4o",
+    "gpt-4o-mini"
+}
+
+# Modelos que usam Anthropic (Claude)
+ANTHROPIC_MODELS = {
+    "claude-3-5-sonnet-20241022"
 }
 
 # Configurações do agente
@@ -56,6 +77,10 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 if OPENAI_API_KEY:
     os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
+# Configuração das variáveis de ambiente para Anthropic
+if ANTHROPIC_API_KEY:
+    os.environ["ANTHROPIC_API_KEY"] = ANTHROPIC_API_KEY
+
 def get_active_csv_path():
     """Retorna o CSV ativo: o carregado ou o padrão."""
     if os.path.exists(UPLOADED_CSV_PATH):
@@ -68,18 +93,21 @@ def get_active_csv_path():
 def validate_config():
     """Valida se as configurações necessárias estão presentes."""
     errors = []
-    
+
     if not HUGGINGFACE_API_KEY:
         errors.append("HUGGINGFACE_API_KEY não configurada")
-    
+
     if not OPENAI_API_KEY:
         errors.append("OPENAI_API_KEY não configurada")
-    
+
+    if not ANTHROPIC_API_KEY:
+        errors.append("ANTHROPIC_API_KEY não configurada")
+
     if not os.path.exists(DEFAULT_CSV_PATH):
         errors.append(f"Arquivo CSV padrão não encontrado: {DEFAULT_CSV_PATH}")
-    
+
     if errors:
         raise ValueError(f"Erros de configuração: {', '.join(errors)}")
-    
+
     logging.info("Configurações validadas com sucesso")
     return True
