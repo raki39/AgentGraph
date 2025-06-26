@@ -1,0 +1,223 @@
+"""
+Nó para processamento de consultas SQL
+"""
+import time
+import logging
+import pandas as pd
+from typing import Dict, Any, TypedDict
+
+from agents.tools import is_greeting, query_with_llama
+from agents.sql_agent import SQLAgentManager
+from utils.object_manager import get_object_manager
+
+class QueryState(TypedDict):
+    """Estado para processamento de consultas"""
+    user_input: str
+    selected_model: str
+    response: str
+    execution_time: float
+    error: str
+    intermediate_steps: list
+    llama_instruction: str
+    sql_result: dict
+
+async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Nó principal para processar consulta do usuário
+    
+    Args:
+        state: Estado atual com entrada do usuário
+        
+    Returns:
+        Estado atualizado com resposta processada
+    """
+    start_time = time.time()
+    user_input = state["user_input"]
+    selected_model = state["selected_model"]
+    
+    logging.info(f"[QUERY] Processando: {user_input[:50]}...")
+    
+    try:
+        # Verifica se é saudação
+        if is_greeting(user_input):
+            greeting_response = "Olá! Estou aqui para ajudar com suas consultas. Pergunte algo relacionado aos dados carregados no agente!"
+            state.update({
+                "response": greeting_response,
+                "execution_time": time.time() - start_time,
+                "error": None
+            })
+            return state
+        
+        # Recupera objetos necessários
+        obj_manager = get_object_manager()
+        
+        # Recupera cache manager
+        cache_id = state.get("cache_id")
+        cache_manager = obj_manager.get_cache_manager(cache_id) if cache_id else None
+        
+        # Verifica cache se disponível
+        if cache_manager:
+            cached_response = cache_manager.get_cached_response(user_input)
+            if cached_response:
+                logging.info(f"[CACHE] Retornando resposta do cache")
+                state.update({
+                    "response": cached_response,
+                    "execution_time": time.time() - start_time,
+                    "error": None
+                })
+                return state
+        
+        # Converte amostra do banco para DataFrame
+        db_sample_dict = state.get("db_sample_dict", {})
+        if not db_sample_dict:
+            raise ValueError("Amostra do banco não disponível")
+        
+        # Reconstrói DataFrame da amostra
+        db_sample = pd.DataFrame(db_sample_dict.get("data", []))
+        if db_sample.empty:
+            raise ValueError("Dados de amostra vazios")
+        
+        # Gera instrução com LLaMA
+        recent_history = cache_manager.recent_history if cache_manager else []
+        llama_instruction, model_id = await query_with_llama(
+            user_input, 
+            db_sample, 
+            selected_model,
+            recent_history
+        )
+        
+        if not llama_instruction:
+            error_msg = "Erro: O modelo Llama não conseguiu gerar uma instrução válida."
+            state.update({
+                "error": error_msg,
+                "response": error_msg,
+                "execution_time": time.time() - start_time
+            })
+            return state
+        
+        state["llama_instruction"] = llama_instruction
+        
+        # Recupera agente SQL
+        agent_id = state.get("agent_id")
+        if not agent_id:
+            raise ValueError("ID do agente SQL não encontrado")
+        
+        sql_agent = obj_manager.get_sql_agent(agent_id)
+        if not sql_agent:
+            raise ValueError("Agente SQL não encontrado")
+        
+        # Executa query no agente SQL
+        sql_result = await sql_agent.execute_query(llama_instruction)
+        
+        if not sql_result["success"]:
+            state.update({
+                "error": sql_result["output"],
+                "response": sql_result["output"],
+                "sql_result": sql_result
+            })
+        else:
+            state.update({
+                "response": sql_result["output"],
+                "intermediate_steps": sql_result["intermediate_steps"],
+                "sql_result": sql_result,
+                "error": None
+            })
+        
+        # Armazena no cache se disponível
+        if cache_manager and sql_result["success"]:
+            cache_manager.cache_response(user_input, state["response"])
+        
+        state["execution_time"] = time.time() - start_time
+        logging.info(f"[QUERY] Concluído em {state['execution_time']:.2f}s")
+        
+    except Exception as e:
+        error_msg = f"Erro ao processar query: {e}"
+        logging.error(f"[QUERY] {error_msg}")
+        state.update({
+            "error": error_msg,
+            "response": error_msg,
+            "execution_time": time.time() - start_time
+        })
+    
+    return state
+
+async def validate_query_input_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Nó para validar entrada da consulta
+    
+    Args:
+        state: Estado com entrada do usuário
+        
+    Returns:
+        Estado atualizado com validação
+    """
+    user_input = state.get("user_input", "").strip()
+    
+    if not user_input:
+        state.update({
+            "error": "Entrada vazia",
+            "response": "Por favor, digite uma pergunta.",
+            "execution_time": 0.0
+        })
+        return state
+    
+    if len(user_input) > 1000:
+        state.update({
+            "error": "Entrada muito longa",
+            "response": "Pergunta muito longa. Por favor, seja mais conciso.",
+            "execution_time": 0.0
+        })
+        return state
+    
+    # Validação passou
+    state["error"] = None
+    logging.info(f"[VALIDATION] Entrada validada: {len(user_input)} caracteres")
+    
+    return state
+
+async def prepare_query_context_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Nó para preparar contexto da consulta
+    
+    Args:
+        state: Estado atual
+        
+    Returns:
+        Estado com contexto preparado
+    """
+    try:
+        # Verifica se todos os componentes necessários estão disponíveis
+        required_ids = ["agent_id", "engine_id", "cache_id"]
+        missing_ids = [id_name for id_name in required_ids if not state.get(id_name)]
+        
+        if missing_ids:
+            raise ValueError(f"IDs necessários não encontrados: {missing_ids}")
+        
+        obj_manager = get_object_manager()
+        
+        # Verifica se objetos existem
+        for id_name in required_ids:
+            obj_id = state[id_name]
+            if id_name == "agent_id":
+                obj = obj_manager.get_sql_agent(obj_id)
+            elif id_name == "engine_id":
+                obj = obj_manager.get_engine(obj_id)
+            elif id_name == "cache_id":
+                obj = obj_manager.get_cache_manager(obj_id)
+            
+            if obj is None:
+                raise ValueError(f"Objeto não encontrado para {id_name}: {obj_id}")
+        
+        # Contexto preparado com sucesso
+        state["context_ready"] = True
+        logging.info("[CONTEXT] Contexto da consulta preparado")
+        
+    except Exception as e:
+        error_msg = f"Erro ao preparar contexto: {e}"
+        logging.error(f"[CONTEXT] {error_msg}")
+        state.update({
+            "error": error_msg,
+            "context_ready": False
+        })
+    
+    return state
