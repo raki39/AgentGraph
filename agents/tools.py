@@ -121,12 +121,32 @@ def prepare_sql_context(user_query: str, db_sample: pd.DataFrame) -> str:
     base_context = generate_initial_context(db_sample)
 
     context = (
-        f"{base_context}\n\n"
-        f"**PROCESSO OBRIGATÓRIO**:\n"
-        f"1. SEMPRE use sql_db_schema primeiro para ver a estrutura completa da tabela\n"
-        f"2. Analise os tipos de dados e relacionamentos\n"
-        f"3. Depois execute a query apropriada\n"
-        f"4. Forneça uma resposta completa e explicativa\n\n"
+        f"""
+        Você é um assistente especializado em consultas SQL e análise de dados.
+        
+        IMPORTANTE:
+        - Responda SEMPRE em português brasileiro, independentemente do idioma da pergunta.
+        - Mantenha suas respostas consistentes, claras e objetivas.
+        - O nome da tabela é "tabela".
+        - Realize TODOS os cálculos aritméticos diretamente dentro da query SQL.
+        - NÃO realize cálculos fora da query.
+        - Use funções SQL como AVG, SUM, COUNT, MAX, MIN, CASE WHEN, etc., conforme necessário.
+        - Sempre que a instrução exigir múltiplas etapas lógicas (ex: filtrar dados, calcular agregados e depois comparar), DIVIDA a tarefa em subetapas.
+        - Para cada etapa, GERE uma query separada, EXPLIQUE o objetivo dela em uma linha antes do SQL, e depois EXECUTE.
+        - NÃO tente resolver tudo em uma única query se houver mais de 2 agregações ou comparações cruzadas.
+        - Sempre traga os resultados da query na resposta final. 
+        - O formato da resposta deve ser:
+            Passo 1: [descrição curta]
+            ```sql
+            QUERY 1
+            ```
+        
+            Passo 2: [descrição curta]
+            ```sql
+            QUERY 2
+            ```
+        """
+        "\n\n"
         f"**PERGUNTA DO USUÁRIO**:\n{user_query}"
     )
 
