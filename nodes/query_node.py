@@ -6,7 +6,7 @@ import logging
 import pandas as pd
 from typing import Dict, Any, TypedDict
 
-from agents.tools import is_greeting, query_with_llama
+from agents.tools import is_greeting, detect_query_type, prepare_sql_context
 from agents.sql_agent import SQLAgentManager
 from utils.object_manager import get_object_manager
 
@@ -77,25 +77,25 @@ async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if db_sample.empty:
             raise ValueError("Dados de amostra vazios")
         
-        # Gera instrução com LLaMA
-        recent_history = cache_manager.recent_history if cache_manager else []
-        llama_instruction, model_id = await query_with_llama(
-            user_input, 
-            db_sample, 
-            selected_model,
-            recent_history
-        )
-        
-        if not llama_instruction:
-            error_msg = "Erro: O modelo Llama não conseguiu gerar uma instrução válida."
+        # Detecta tipo de query e prepara contexto
+        query_type = detect_query_type(user_input)
+
+        if query_type == 'sql_query':
+            # Prepara contexto para envio direto ao agentSQL
+            sql_context = prepare_sql_context(user_input, db_sample)
+            state["sql_context"] = sql_context
+            state["query_type"] = query_type
+
+            logging.info(f"[DEBUG] Contexto preparado para agentSQL:\n{sql_context}\n")
+        else:
+            # Para tipos futuros (prediction, chart)
+            error_msg = f"Tipo de query '{query_type}' ainda não implementado."
             state.update({
                 "error": error_msg,
                 "response": error_msg,
                 "execution_time": time.time() - start_time
             })
             return state
-        
-        state["llama_instruction"] = llama_instruction
         
         # Recupera agente SQL
         agent_id = state.get("agent_id")
@@ -106,8 +106,8 @@ async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if not sql_agent:
             raise ValueError("Agente SQL não encontrado")
         
-        # Executa query no agente SQL
-        sql_result = await sql_agent.execute_query(llama_instruction)
+        # Executa query no agente SQL com contexto direto
+        sql_result = await sql_agent.execute_query(state["sql_context"])
         
         if not sql_result["success"]:
             state.update({

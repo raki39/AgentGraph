@@ -47,9 +47,11 @@ class AgentGraphManager:
         self.object_manager = get_object_manager()
         self.engine = None
         self.sql_agent = None
+        self.db = None
         # IDs para objetos não-serializáveis
         self.agent_id = None
         self.engine_id = None
+        self.db_id = None
         self.cache_id = None
         self._initialize_system()
         self._build_graph()
@@ -75,11 +77,15 @@ class AgentGraphManager:
                 db = create_sql_database(self.engine)
                 logging.info("Novo banco criado")
 
+            # Armazena banco de dados
+            self.db = db
+            self.db_id = self.object_manager.store_database(db)
+
             # Cria agente SQL
             self.sql_agent = SQLAgentManager(db)
 
             # Armazena objetos no gerenciador
-            self.agent_id = self.object_manager.store_sql_agent(self.sql_agent)
+            self.agent_id = self.object_manager.store_sql_agent(self.sql_agent, self.db_id)
             self.engine_id = self.object_manager.store_engine(self.engine)
             self.cache_id = self.object_manager.store_cache_manager(self.cache_manager)
 
@@ -184,9 +190,9 @@ class AgentGraphManager:
             raise
     
     async def process_query(
-        self, 
-        user_input: str, 
-        selected_model: str = "LLaMA 70B",
+        self,
+        user_input: str,
+        selected_model: str = "GPT-4o-mini",
         advanced_mode: bool = False,
         thread_id: str = "default"
     ) -> Dict[str, Any]:
@@ -203,6 +209,24 @@ class AgentGraphManager:
             Resultado do processamento
         """
         try:
+            # Verifica se precisa recriar agente SQL com modelo diferente
+            current_sql_agent = self.object_manager.get_sql_agent(self.agent_id)
+            if current_sql_agent and current_sql_agent.model_name != selected_model:
+                logging.info(f"Recriando agente SQL com modelo {selected_model}")
+
+                # Recupera banco de dados associado ao agente
+                db_id = self.object_manager.get_db_id_for_agent(self.agent_id)
+                if db_id:
+                    db = self.object_manager.get_database(db_id)
+                    if db:
+                        new_sql_agent = SQLAgentManager(db, selected_model)
+                        self.agent_id = self.object_manager.store_sql_agent(new_sql_agent, db_id)
+                        logging.info(f"Agente SQL recriado com sucesso para modelo {selected_model}")
+                    else:
+                        logging.error("Banco de dados não encontrado para recriar agente")
+                else:
+                    logging.error("ID do banco de dados não encontrado para o agente")
+
             # Prepara estado inicial com IDs serializáveis
             initial_state = {
                 "user_input": user_input,
@@ -216,6 +240,7 @@ class AgentGraphManager:
                 # IDs para recuperar objetos não-serializáveis
                 "agent_id": self.agent_id,
                 "engine_id": self.engine_id,
+                "db_id": self.db_id,
                 "cache_id": self.cache_id
             }
             
@@ -273,14 +298,15 @@ class AgentGraphManager:
             if db_result["success"]:
                 # Atualiza IDs dos objetos
                 self.engine_id = db_result["engine_id"]
+                self.db_id = db_result["db_id"]
 
                 # Cria novo agente SQL
                 new_engine = self.object_manager.get_engine(self.engine_id)
-                new_db = self.object_manager.get_object(db_result["db_id"])
+                new_db = self.object_manager.get_database(self.db_id)
                 new_sql_agent = SQLAgentManager(new_db)
 
                 # Atualiza agente
-                self.agent_id = self.object_manager.store_sql_agent(new_sql_agent)
+                self.agent_id = self.object_manager.store_sql_agent(new_sql_agent, self.db_id)
 
                 # Limpa cache
                 cache_manager = self.object_manager.get_cache_manager(self.cache_id)

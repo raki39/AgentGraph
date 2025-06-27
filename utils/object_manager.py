@@ -14,12 +14,20 @@ class ObjectManager:
         self._objects: Dict[str, Any] = {}
         self._sql_agents: Dict[str, Any] = {}
         self._engines: Dict[str, Any] = {}
+        self._databases: Dict[str, Any] = {}
         self._cache_managers: Dict[str, Any] = {}
+        # Mapeamento para relacionar agentes com seus bancos
+        self._agent_db_mapping: Dict[str, str] = {}
     
-    def store_sql_agent(self, agent: Any) -> str:
+    def store_sql_agent(self, agent: Any, db_id: str = None) -> str:
         """Armazena agente SQL e retorna ID"""
         agent_id = str(uuid.uuid4())
         self._sql_agents[agent_id] = agent
+
+        # Mapeia agente com seu banco se fornecido
+        if db_id:
+            self._agent_db_mapping[agent_id] = db_id
+
         logging.info(f"Agente SQL armazenado com ID: {agent_id}")
         return agent_id
     
@@ -37,6 +45,21 @@ class ObjectManager:
     def get_engine(self, engine_id: str) -> Optional[Any]:
         """Recupera engine pelo ID"""
         return self._engines.get(engine_id)
+
+    def store_database(self, database: Any) -> str:
+        """Armazena banco de dados e retorna ID"""
+        db_id = str(uuid.uuid4())
+        self._databases[db_id] = database
+        logging.info(f"Banco de dados armazenado com ID: {db_id}")
+        return db_id
+
+    def get_database(self, db_id: str) -> Optional[Any]:
+        """Recupera banco de dados pelo ID"""
+        return self._databases.get(db_id)
+
+    def get_db_id_for_agent(self, agent_id: str) -> Optional[str]:
+        """Recupera ID do banco associado ao agente"""
+        return self._agent_db_mapping.get(agent_id)
     
     def store_cache_manager(self, cache_manager: Any) -> str:
         """Armazena cache manager e retorna ID"""
@@ -90,7 +113,9 @@ class ObjectManager:
         self._objects.clear()
         self._sql_agents.clear()
         self._engines.clear()
+        self._databases.clear()
         self._cache_managers.clear()
+        self._agent_db_mapping.clear()
         logging.info("Todos os objetos foram limpos do gerenciador")
     
     def get_stats(self) -> Dict[str, int]:
@@ -98,8 +123,10 @@ class ObjectManager:
         return {
             "sql_agents": len(self._sql_agents),
             "engines": len(self._engines),
+            "databases": len(self._databases),
             "cache_managers": len(self._cache_managers),
-            "general_objects": len(self._objects)
+            "general_objects": len(self._objects),
+            "agent_db_mappings": len(self._agent_db_mapping)
         }
 
 # Instância global do gerenciador

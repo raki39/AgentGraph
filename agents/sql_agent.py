@@ -2,45 +2,121 @@
 Criação e configuração do agente SQL
 """
 import logging
-from typing import Optional
+import time
+import asyncio
+from typing import Optional, Dict, Any
 from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_community.utilities import SQLDatabase
 
-from utils.config import MAX_ITERATIONS, TEMPERATURE
+
+from utils.config import (
+    MAX_ITERATIONS,
+    TEMPERATURE,
+    AVAILABLE_MODELS,
+    OPENAI_MODELS,
+    ANTHROPIC_MODELS
+)
+
+async def retry_with_backoff(func, max_retries=3, base_delay=1.0):
+    """
+    Executa função com retry e backoff exponencial para lidar com rate limiting
+
+    Args:
+        func: Função a ser executada
+        max_retries: Número máximo de tentativas
+        base_delay: Delay base em segundos
+
+    Returns:
+        Resultado da função ou levanta exceção após esgotar tentativas
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return func()
+        except Exception as e:
+            error_str = str(e)
+
+            # Verifica se é erro de rate limiting ou overload
+            if any(keyword in error_str.lower() for keyword in ['overloaded', 'rate_limit', 'too_many_requests', 'quota']):
+                if attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)  # Backoff exponencial
+                    logging.warning(f"API sobrecarregada (tentativa {attempt + 1}/{max_retries + 1}). Aguardando {delay}s...")
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    logging.error(f"API continua sobrecarregada após {max_retries + 1} tentativas")
+                    raise Exception(f"API da Anthropic sobrecarregada. Tente novamente em alguns minutos. Erro original: {e}")
+            else:
+                # Se não é erro de rate limiting, levanta imediatamente
+                raise e
+
+    # Não deveria chegar aqui, mas por segurança
+    raise Exception("Número máximo de tentativas excedido")
+
+
 
 def create_sql_agent_executor(db: SQLDatabase, model_name: str = "gpt-4o-mini"):
     """
-    Cria um agente SQL usando LangChain
-    
+    Cria um agente SQL usando LangChain com suporte a diferentes provedores
+
     Args:
         db: Objeto SQLDatabase do LangChain
-        model_name: Nome do modelo OpenAI a usar
-        
+        model_name: Nome do modelo a usar (OpenAI, Anthropic)
+
     Returns:
         Agente SQL configurado
     """
     try:
-        # Cria o modelo LLM
-        llm = ChatOpenAI(
-            model=model_name, 
-            temperature=TEMPERATURE
-        )
-        
+        # Obtém o ID real do modelo
+        model_id = AVAILABLE_MODELS.get(model_name, model_name)
+
+        # Cria o modelo LLM baseado no provedor
+        if model_id in OPENAI_MODELS:
+            # Configurações específicas para modelos OpenAI
+            if model_id == "o3-mini":
+                # o3-mini não suporta temperature
+                llm = ChatOpenAI(model=model_id)
+            else:
+                # GPT-4o e GPT-4o-mini suportam temperature
+                llm = ChatOpenAI(model=model_id, temperature=TEMPERATURE)
+
+            agent_type = "openai-tools"
+
+        elif model_id in ANTHROPIC_MODELS:
+            # Claude com tool-calling e configurações para rate limiting
+            llm = ChatAnthropic(
+                model=model_id,
+                temperature=TEMPERATURE,
+                max_tokens=4096,
+                max_retries=2,  # Retry interno do cliente
+                timeout=60.0    # Timeout mais longo
+            )
+            agent_type = "tool-calling"  # Claude usa tool-calling
+
+        else:
+            # Fallback para OpenAI
+            llm = ChatOpenAI(
+                model="gpt-4o-mini",
+                temperature=TEMPERATURE
+            )
+            agent_type = "openai-tools"
+            logging.warning(f"Modelo {model_name} não reconhecido, usando gpt-4o-mini como fallback")
+
         # Cria o agente SQL
         sql_agent = create_sql_agent(
             llm=llm,
             db=db,
-            agent_type="openai-tools",
+            agent_type=agent_type,
             verbose=True,
             max_iterations=MAX_ITERATIONS,
             return_intermediate_steps=True,
             top_k=40
         )
-        
-        logging.info(f"Agente SQL criado com sucesso usando modelo {model_name}")
+
+        logging.info(f"Agente SQL criado com sucesso usando modelo {model_name} ({model_id}) com agent_type={agent_type}")
         return sql_agent
-        
+
     except Exception as e:
         logging.error(f"Erro ao criar agente SQL: {e}")
         raise
@@ -76,31 +152,106 @@ class SQLAgentManager:
         self._initialize_agent()
         logging.info("Agente SQL recriado com sucesso")
     
+    def _extract_text_from_claude_response(self, output) -> str:
+        """
+        Extrai texto limpo da resposta do Claude que pode vir em formato complexo
+
+        Args:
+            output: Resposta do agente (pode ser string, lista ou dict)
+
+        Returns:
+            String limpa com o texto da resposta
+        """
+        try:
+            # Se já é string, retorna diretamente
+            if isinstance(output, str):
+                return output
+
+            # Se é lista, procura por dicionários com 'text'
+            if isinstance(output, list):
+                text_parts = []
+                for item in output:
+                    if isinstance(item, dict) and 'text' in item:
+                        text_parts.append(item['text'])
+                    elif isinstance(item, str):
+                        text_parts.append(item)
+
+                if text_parts:
+                    return '\n'.join(text_parts)
+
+            # Se é dict, procura por 'text' ou converte para string
+            if isinstance(output, dict):
+                if 'text' in output:
+                    return output['text']
+                elif 'content' in output:
+                    return str(output['content'])
+
+            # Fallback: converte para string
+            return str(output)
+
+        except Exception as e:
+            logging.warning(f"Erro ao extrair texto da resposta: {e}")
+            return str(output)
+
     async def execute_query(self, instruction: str) -> dict:
         """
-        Executa uma query através do agente SQL
-        
+        Executa uma query através do agente SQL com retry para rate limiting
+
         Args:
             instruction: Instrução para o agente
-            
+
         Returns:
             Resultado da execução
         """
         try:
             logging.info("------- Agent SQL: Executando query -------")
-            response = self.agent.invoke({"input": instruction})
-            
+
+            # Verifica se é agente Claude para aplicar retry
+            model_id = getattr(self, 'model_name', '')
+            is_claude = any(claude_model in model_id for claude_model in ANTHROPIC_MODELS)
+
+            if is_claude:
+                # Usa retry com backoff para Claude
+                response = await retry_with_backoff(
+                    lambda: self.agent.invoke({"input": instruction}),
+                    max_retries=3,
+                    base_delay=2.0
+                )
+            else:
+                # Execução normal para outros modelos
+                response = self.agent.invoke({"input": instruction})
+
+            # Extrai e limpa a resposta
+            raw_output = response.get("output", "Erro ao obter a resposta do agente.")
+            clean_output = self._extract_text_from_claude_response(raw_output)
+
             result = {
-                "output": response.get("output", "Erro ao obter a resposta do agente."),
+                "output": clean_output,
                 "intermediate_steps": response.get("intermediate_steps", []),
                 "success": True
             }
-            
+
             logging.info(f"Query executada com sucesso: {result['output'][:100]}...")
             return result
-            
+
         except Exception as e:
-            error_msg = f"Erro ao consultar o agente SQL: {e}"
+            error_str = str(e)
+
+            # Mensagem mais amigável para problemas de rate limiting
+            if any(keyword in error_str.lower() for keyword in ['overloaded', 'rate_limit', 'too_many_requests', 'quota']):
+                error_msg = (
+                    "🚫 **API da Anthropic temporariamente sobrecarregada**\n\n"
+                    "A API do Claude está com muitas solicitações no momento. "
+                    "Por favor, aguarde alguns minutos e tente novamente.\n\n"
+                    "**Sugestões:**\n"
+                    "- Aguarde 2-3 minutos antes de tentar novamente\n"
+                    "- Considere usar um modelo OpenAI temporariamente\n"
+                    "- Tente novamente em horários de menor movimento\n\n"
+                    f"*Erro técnico: {e}*"
+                )
+            else:
+                error_msg = f"Erro ao consultar o agente SQL: {e}"
+
             logging.error(error_msg)
             return {
                 "output": error_msg,

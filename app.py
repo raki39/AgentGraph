@@ -8,9 +8,9 @@ from typing import List, Tuple, Optional, Dict
 
 from graphs.main_graph import initialize_graph, get_graph_manager
 from utils.config import (
-    LLAMA_MODELS, 
-    DEFAULT_MODEL, 
-    GRADIO_SHARE, 
+    AVAILABLE_MODELS,
+    DEFAULT_MODEL,
+    GRADIO_SHARE,
     GRADIO_PORT,
     validate_config
 )
@@ -259,13 +259,20 @@ def reset_all():
 # Interface Gradio
 def create_interface():
     """Cria interface Gradio"""
-    
-    with gr.Blocks(theme=gr.themes.Soft()) as demo:
+
+    # CSS customizado para pequeno espaçamento lateral
+    custom_css = """
+    .gradio-container {
+        padding: 20px 30px !important;
+    }
+    """
+
+    with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
         
         with gr.Row():
             with gr.Column(scale=1):
                 gr.Markdown("## Configurações")
-                model_selector = gr.Dropdown(list(LLAMA_MODELS.keys()), value=DEFAULT_MODEL, label="")
+                model_selector = gr.Dropdown(list(AVAILABLE_MODELS.keys()), value=DEFAULT_MODEL, label="")
                 csv_file = gr.File(file_types=[".csv"], label="")
                 upload_feedback = gr.Markdown()
                 advanced_checkbox = gr.Checkbox(label="Refinar Resposta")

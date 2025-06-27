@@ -19,32 +19,41 @@ DEFAULT_CSV_PATH = os.getenv("DEFAULT_CSV_PATH", "tabela.csv")
 SQL_DB_PATH = os.getenv("SQL_DB_PATH", "data.db")
 UPLOADED_CSV_PATH = os.path.join(UPLOAD_DIR, "tabela.csv")
 
-# Configurações de modelos LLM
-LLAMA_MODELS = {
-    "LLaMA 70B": "meta-llama/Llama-3.3-70B-Instruct",
-    "LlaMA 8B": "meta-llama/Llama-3.1-8B-Instruct",
-    "DeepSeek-R1": "deepseek-ai/DeepSeek-R1-0528",
-    "o3-mini": "o3-mini",
-    "GPT-4o": "gpt-4o",
+# Modelos disponíveis para seleção (usados no agentSQL)
+AVAILABLE_MODELS = {
+    "GPT-o3-mini": "o3-mini",
     "GPT-4o-mini": "gpt-4o-mini",
+    "GPT-4o": "gpt-4o",
     "Claude-3.5-Sonnet": "claude-3-5-sonnet-20241022"
 }
 
+# Modelos para refinamento (apenas uso interno)
+REFINEMENT_MODELS = {
+    "LLaMA 70B": "meta-llama/Llama-3.3-70B-Instruct",
+    "LlaMA 8B": "meta-llama/Llama-3.1-8B-Instruct",
+    "DeepSeek-R1": "deepseek-ai/DeepSeek-R1-0528"
+}
+
+# Mapeamento completo de modelos (para compatibilidade)
+LLAMA_MODELS = {**AVAILABLE_MODELS, **REFINEMENT_MODELS}
+
 MAX_TOKENS_MAP = {
+    # Modelos de refinamento
     "meta-llama/Llama-3.3-70B-Instruct": 900,
     "meta-llama/Llama-3.1-8B-Instruct": 700,
-    "DeepSeek-R1": 8192,
+    "deepseek-ai/DeepSeek-R1-0528": 8192,
+    # Modelos do agentSQL
     "o3-mini": 4096,
-    "gpt-4o": 4096,
     "gpt-4o-mini": 4096,
+    "gpt-4o": 4096,
     "claude-3-5-sonnet-20241022": 1024
 }
 
 # Modelos que usam OpenAI (GPT)
 OPENAI_MODELS = {
     "o3-mini",
-    "gpt-4o",
     "gpt-4o-mini"
+    "gpt-4o",   
 }
 
 # Modelos que usam Anthropic (Claude)
@@ -52,8 +61,15 @@ ANTHROPIC_MODELS = {
     "claude-3-5-sonnet-20241022"
 }
 
+# Modelos que usam HuggingFace (para refinamento)
+HUGGINGFACE_MODELS = {
+    "meta-llama/Llama-3.3-70B-Instruct",
+    "meta-llama/Llama-3.1-8B-Instruct",
+    "deepseek-ai/DeepSeek-R1-0528"
+}
+
 # Configurações do agente
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "LLaMA 70B")
+DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "GPT-4o-mini")
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "40"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0"))
 

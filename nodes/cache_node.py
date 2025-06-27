@@ -31,14 +31,14 @@ async def update_history_node(state: Dict[str, Any]) -> Dict[str, Any]:
         
         # Adiciona ao histórico de logs
         history_entry = {
-            "Modelo LLM": state.get("selected_model", ""),
+            "Modelo AgentSQL": state.get("selected_model", ""),
             "Pergunta": state.get("user_input", ""),
             "Resposta": state.get("response", ""),
             "Tempo de Resposta (s)": round(state.get("execution_time", 0.0), 2),
             "Modo Avançado": state.get("advanced_mode", False),
             "Refinado": state.get("refined", False),
             "Erro": state.get("error"),
-            "Instrução LLaMA": state.get("llama_instruction", "")[:100] + "..." if state.get("llama_instruction") else None
+            "Tipo de Query": state.get("query_type", "sql_query")
         }
         cache_manager.add_to_history(history_entry)
         

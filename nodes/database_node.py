@@ -67,7 +67,7 @@ async def create_database_from_dataframe_node(state: Dict[str, Any]) -> Dict[str
         
         # Armazena objetos no gerenciador
         engine_id = obj_manager.store_engine(engine)
-        db_id = obj_manager.store_object(db, "sql_database")
+        db_id = obj_manager.store_database(db)
         
         # Informações do banco
         database_info = {
@@ -154,7 +154,7 @@ async def load_existing_database_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # Armazena objetos no gerenciador
         obj_manager = get_object_manager()
         engine_id = obj_manager.store_engine(engine)
-        db_id = obj_manager.store_object(db, "sql_database")
+        db_id = obj_manager.store_database(db)
         
         # Atualiza estado
         state.update({

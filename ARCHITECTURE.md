@@ -1,8 +1,15 @@
-# AgentGraph - Arquitetura LangGraph
+# 🏗️ AgentGraph - Arquitetura Técnica Detalhada
 
-## 🏗️ Visão Geral
+## 🎯 Visão Geral
 
-O AgentGraph foi completamente refatorado do LangChain para LangGraph, implementando uma arquitetura modular baseada em nós com processamento assíncrono e gerenciamento inteligente de objetos.
+O AgentGraph é uma **plataforma multi-agente** construída com LangGraph, implementando uma arquitetura modular e extensível baseada em nós especializados. O sistema suporta múltiplos provedores LLM (OpenAI, Anthropic, HuggingFace) com processamento assíncrono, gerenciamento inteligente de objetos não-serializáveis e sistema robusto de retry para rate limiting.
+
+### **Principais Inovações Arquiteturais**
+- 🔄 **Fluxo Otimizado**: Detecção → AgentSQL → Refinamento (sem LLM intermediária)
+- 🧠 **Multi-Provedor**: Suporte nativo a OpenAI, Anthropic e HuggingFace
+- 🛠️ **Tool-Calling**: Ferramentas SQL nativas com verbose ativo
+- 🎛️ **Object Manager**: Solução elegante para objetos não-serializáveis
+- ⚡ **Async/Await**: Processamento não-bloqueante em toda a stack
 
 ## 📁 Estrutura do Projeto
 
@@ -242,3 +249,132 @@ python app.py
 - Taxa de acerto do cache
 - Estatísticas de processamento CSV
 - Validação de componentes
+
+## 🚀 Roadmap de Expansão
+
+### **🎯 Arquitetura Preparada para Múltiplos Agentes**
+
+A arquitetura atual está **perfeitamente preparada** para expansão com novos agentes especializados:
+
+#### **📄 Agente PDF (Curto Prazo)**
+```python
+# Implementação planejada:
+nodes/pdf_processing_node.py
+agents/pdf_agent.py
+
+# Funcionalidades:
+- Extração de texto (PyPDF2, pdfplumber)
+- OCR para documentos escaneados (Tesseract)
+- Análise de estrutura de documentos
+- Busca semântica em conteúdo
+- Integração com LangGraph existente
+```
+
+#### **🗄️ Agente MySQL (Médio Prazo)**
+```python
+# Implementação planejada:
+nodes/mysql_node.py
+agents/mysql_agent.py
+
+# Funcionalidades:
+- Conexões externas MySQL/PostgreSQL
+- Pool de conexões otimizado
+- Queries complexas com JOINs
+- Transações e rollbacks
+- Múltiplas bases de dados
+```
+
+#### **📊 Agente de Gráficos (Médio Prazo)**
+```python
+# Implementação planejada:
+nodes/chart_generation_node.py
+agents/chart_agent.py
+
+# Funcionalidades:
+- Matplotlib, Plotly, Seaborn
+- Gráficos baseados em consultas SQL
+- Análise automática de dados
+- Exportação em múltiplos formatos
+- Dashboards interativos
+```
+
+#### **🤖 Agente de ML/Previsões (Longo Prazo)**
+```python
+# Implementação planejada:
+nodes/prediction_node.py
+agents/ml_agent.py
+
+# Funcionalidades:
+- Modelos de Machine Learning
+- Análise de séries temporais
+- Previsões automáticas
+- Integração com scikit-learn
+- AutoML capabilities
+```
+
+### **🔄 Sistema de Detecção Expandido**
+
+```python
+def detect_query_type(user_query: str) -> str:
+    """Função já preparada para expansão"""
+
+    query_lower = user_query.lower().strip()
+
+    # Detecção atual
+    if 'sql' in query_lower or 'tabela' in query_lower:
+        return 'sql_query'
+
+    # Expansões futuras (já estruturadas)
+    elif 'pdf' in query_lower or 'documento' in query_lower:
+        return 'pdf_processing'
+    elif 'mysql' in query_lower or 'banco mysql' in query_lower:
+        return 'mysql_query'
+    elif 'gráfico' in query_lower or 'chart' in query_lower:
+        return 'chart_generation'
+    elif 'prever' in query_lower or 'previsão' in query_lower:
+        return 'prediction'
+
+    return 'sql_query'  # Default
+```
+
+### **🎛️ Roteamento Condicional Preparado**
+
+```python
+# No main_graph.py - Estrutura já preparada
+def route_by_type(state: Dict[str, Any]) -> str:
+    query_type = state.get("query_type", "sql_query")
+
+    routing_map = {
+        "sql_query": "sql_processing",
+        "pdf_processing": "pdf_processing",      # FUTURO
+        "mysql_query": "mysql_processing",       # FUTURO
+        "chart_generation": "chart_generation",  # FUTURO
+        "prediction": "prediction_processing"    # FUTURO
+    }
+
+    return routing_map.get(query_type, "sql_processing")
+```
+
+### **📈 Facilidade de Implementação**
+
+**Por que é fácil expandir:**
+- ✅ **Estrutura modular** - Cada agente = novo nó
+- ✅ **ObjectManager flexível** - Gerencia qualquer objeto
+- ✅ **Sistema de detecção** - Já preparado para novos tipos
+- ✅ **Configurações centralizadas** - Fácil adicionar APIs
+- ✅ **Interface dinâmica** - Dropdown automático
+- ✅ **Async/await** - Performance mantida
+- ✅ **Logs estruturados** - Debugging facilitado
+
+### **🎯 Próximos Passos Recomendados**
+
+1. **Agente PDF** - Implementação mais simples e útil
+2. **Sistema de Templates** - Prompts especializados por agente
+3. **Métricas avançadas** - Performance por tipo de agente
+4. **API REST** - Exposição de funcionalidades
+5. **Agente MySQL** - Conexões externas
+6. **Sistema de Pipelines** - Combinação de agentes
+
+---
+
+**🏆 Conclusão**: A arquitetura atual é **excepcional** e está perfeitamente preparada para se tornar uma **plataforma completa de agentes especializados**. A expansão será natural e incremental, mantendo a robustez e performance existentes.
