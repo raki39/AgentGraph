@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
-from nodes.agent_node import AgentState, should_refine_response
+from nodes.agent_node import AgentState, should_refine_response, should_generate_graph
 from nodes.csv_processing_node import csv_processing_node
 from nodes.database_node import (
     create_database_from_dataframe_node,
@@ -27,6 +27,8 @@ from nodes.cache_node import (
     cache_response_node,
     update_history_node
 )
+from nodes.graph_selection_node import graph_selection_node
+from nodes.graph_generation_node import graph_generation_node
 from nodes.custom_nodes import CustomNodeManager
 from agents.sql_agent import SQLAgentManager
 from agents.tools import CacheManager
@@ -142,6 +144,12 @@ class AgentGraphManager:
 
             # Adiciona nós de processamento
             workflow.add_node("process_query", process_user_query_node)
+
+            # Adiciona nós de gráficos
+            workflow.add_node("graph_selection", graph_selection_node)
+            workflow.add_node("graph_generation", graph_generation_node)
+
+            # Adiciona nós de refinamento
             workflow.add_node("refine_response", refine_response_node)
             workflow.add_node("format_response", format_final_response_node)
 
@@ -164,9 +172,23 @@ class AgentGraphManager:
             workflow.add_edge("prepare_context", "get_db_sample")
             workflow.add_edge("get_db_sample", "process_query")
 
-            # Condicional para refinamento
+            # Condicional para gráficos (após AgentSQL)
             workflow.add_conditional_edges(
                 "process_query",
+                should_generate_graph,
+                {
+                    "graph_selection": "graph_selection",
+                    "refine_response": "refine_response",
+                    "cache_response": "cache_response"
+                }
+            )
+
+            # Fluxo dos gráficos
+            workflow.add_edge("graph_selection", "graph_generation")
+
+            # Após geração de gráfico, vai para refinamento ou cache
+            workflow.add_conditional_edges(
+                "graph_generation",
                 should_refine_response,
                 {
                     "refine_response": "refine_response",
@@ -241,7 +263,15 @@ class AgentGraphManager:
                 "agent_id": self.agent_id,
                 "engine_id": self.engine_id,
                 "db_id": self.db_id,
-                "cache_id": self.cache_id
+                "cache_id": self.cache_id,
+                # Campos relacionados a gráficos
+                "query_type": "sql_query",  # Será atualizado pela detecção
+                "sql_query_extracted": None,
+                "graph_type": None,
+                "graph_data": None,
+                "graph_image_id": None,
+                "graph_generated": False,
+                "graph_error": None
             }
             
             # Executa o grafo

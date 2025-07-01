@@ -4,7 +4,10 @@ AgentGraph - Aplicação principal com interface Gradio e LangGraph
 import asyncio
 import logging
 import gradio as gr
+import tempfile
+import os
 from typing import List, Tuple, Optional, Dict
+from PIL import Image
 
 from graphs.main_graph import initialize_graph, get_graph_manager
 from utils.config import (
@@ -14,6 +17,7 @@ from utils.config import (
     GRADIO_PORT,
     validate_config
 )
+from utils.object_manager import get_object_manager
 
 # Configuração de logging
 logging.basicConfig(
@@ -53,7 +57,7 @@ def run_async(coro):
     
     return loop.run_until_complete(coro)
 
-def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool = False) -> str:
+def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool = False) -> Tuple[str, Optional[str]]:
     """
     Processa resposta do chatbot usando LangGraph
 
@@ -63,12 +67,12 @@ def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool =
         advanced_mode: Se deve usar refinamento avançado
 
     Returns:
-        Resposta processada
+        Tupla com (resposta_texto, caminho_imagem_grafico)
     """
     global graph_manager
 
     if not graph_manager:
-        return "❌ Sistema não inicializado. Tente recarregar a página."
+        return "❌ Sistema não inicializado. Tente recarregar a página.", None
 
     try:
         # Processa query através do LangGraph
@@ -78,13 +82,53 @@ def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool =
             advanced_mode=advanced_mode
         ))
 
-        return result.get("response", "Erro ao processar resposta")
+        response_text = result.get("response", "Erro ao processar resposta")
+        graph_image_path = None
+
+        # Verifica se foi gerado um gráfico
+        if result.get("graph_generated", False) and result.get("graph_image_id"):
+            graph_image_path = save_graph_image_to_temp(result["graph_image_id"])
+
+            # Adiciona informação sobre o gráfico na resposta
+            if graph_image_path:
+                graph_type = result.get("graph_type", "gráfico")
+                response_text += f"\n\n📊 **Gráfico gerado**: {graph_type.replace('_', ' ').title()}"
+
+        return response_text, graph_image_path
 
     except Exception as e:
         error_msg = f"Erro no chatbot: {e}"
         logging.error(error_msg)
         logging.error(f"Detalhes do erro: {type(e).__name__}: {str(e)}")
-        return error_msg
+        return error_msg, None
+
+def save_graph_image_to_temp(graph_image_id: str) -> Optional[str]:
+    """
+    Salva imagem do gráfico em arquivo temporário para exibição no Gradio
+
+    Args:
+        graph_image_id: ID da imagem no ObjectManager
+
+    Returns:
+        Caminho do arquivo temporário ou None se falhar
+    """
+    try:
+        obj_manager = get_object_manager()
+        graph_image = obj_manager.get_object(graph_image_id)
+
+        if graph_image and isinstance(graph_image, Image.Image):
+            # Cria arquivo temporário
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+            graph_image.save(temp_file.name, format='PNG')
+            temp_file.close()
+
+            logging.info(f"[GRADIO] Gráfico salvo em: {temp_file.name}")
+            return temp_file.name
+
+    except Exception as e:
+        logging.error(f"[GRADIO] Erro ao salvar gráfico: {e}")
+
+    return None
 
 def handle_csv_upload(file) -> str:
     """
@@ -219,19 +263,19 @@ def respond(message: str, chat_history: List[Dict[str, str]], selected_model: st
         advanced_mode: Modo avançado habilitado
 
     Returns:
-        Tupla com (mensagem_vazia, histórico_atualizado)
+        Tupla com (mensagem_vazia, histórico_atualizado, imagem_grafico)
     """
     if not message.strip():
-        return "", chat_history
+        return "", chat_history, None
 
     # Processa resposta
-    response = chatbot_response(message, selected_model, advanced_mode)
+    response, graph_image_path = chatbot_response(message, selected_model, advanced_mode)
 
     # Atualiza histórico no formato messages
     chat_history.append({"role": "user", "content": message})
     chat_history.append({"role": "assistant", "content": response})
 
-    return "", chat_history
+    return "", chat_history, graph_image_path
 
 def handle_csv_and_clear_chat(file):
     """
@@ -241,20 +285,20 @@ def handle_csv_and_clear_chat(file):
         file: Arquivo CSV
 
     Returns:
-        Tupla com (feedback, chat_limpo)
+        Tupla com (feedback, chat_limpo, grafico_limpo)
     """
     feedback = handle_csv_upload(file)
-    return feedback, []
+    return feedback, [], gr.update(visible=False)
 
 def reset_all():
     """
     Reseta tudo e limpa interface
-    
+
     Returns:
-        Tupla com (feedback, chat_limpo, arquivo_limpo)
+        Tupla com (feedback, chat_limpo, arquivo_limpo, grafico_limpo)
     """
     feedback = reset_system()
-    return feedback, [], None
+    return feedback, [], None, gr.update(visible=False)
 
 # Interface Gradio
 def create_interface():
@@ -281,39 +325,62 @@ def create_interface():
             with gr.Column(scale=4):
                 gr.Markdown("## Reasoning Agent")
                 chatbot = gr.Chatbot(
-                    height=500,
+                    height=400,
                     show_label=False,
                     container=True,
                     type="messages"
                 )
+
                 msg = gr.Textbox(placeholder="Digite sua pergunta aqui...", lines=1, label="")
                 btn = gr.Button("Enviar", variant="primary")
                 history_btn = gr.Button("Histórico", variant="secondary")
                 history_output = gr.JSON()
+
+                # Componente para exibir gráficos - posicionado após histórico
+                graph_image = gr.Image(
+                    label="📊 Visualização de Dados",
+                    visible=False,
+                    height=500,  # Altura maior para ocupar mais espaço
+                    show_label=True,
+                    container=True,
+                    interactive=False,
+                    show_download_button=True
+                )
+
                 download_file = gr.File(visible=False)
         
         # Event handlers (usando as funções originais do sistema)
+        def handle_response_with_graph(message, chat_history, model, advanced):
+            """Wrapper para lidar com resposta e gráfico"""
+            empty_msg, updated_history, graph_path = respond(message, chat_history, model, advanced)
+
+            # Controla visibilidade do componente de gráfico
+            if graph_path:
+                return empty_msg, updated_history, gr.update(value=graph_path, visible=True)
+            else:
+                return empty_msg, updated_history, gr.update(visible=False)
+
         msg.submit(
-            respond,
+            handle_response_with_graph,
             inputs=[msg, chatbot, model_selector, advanced_checkbox],
-            outputs=[msg, chatbot]
+            outputs=[msg, chatbot, graph_image]
         )
 
         btn.click(
-            respond,
+            handle_response_with_graph,
             inputs=[msg, chatbot, model_selector, advanced_checkbox],
-            outputs=[msg, chatbot]
+            outputs=[msg, chatbot, graph_image]
         )
 
         csv_file.change(
             handle_csv_and_clear_chat,
             inputs=csv_file,
-            outputs=[upload_feedback, chatbot]
+            outputs=[upload_feedback, chatbot, graph_image]
         )
 
         reset_btn.click(
             reset_all,
-            outputs=[upload_feedback, chatbot, csv_file]
+            outputs=[upload_feedback, chatbot, csv_file, graph_image]
         )
 
         advanced_checkbox.change(

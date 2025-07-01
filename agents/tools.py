@@ -3,6 +3,7 @@ Ferramentas para o agente SQL
 """
 import time
 import logging
+import re
 from typing import Dict, Any, Optional, List
 from huggingface_hub import InferenceClient
 from langchain_community.utilities import SQLDatabase
@@ -89,22 +90,37 @@ def detect_query_type(user_query: str) -> str:
         user_query: Pergunta do usuário
 
     Returns:
-        Tipo de processamento: 'sql_query', 'prediction', 'chart'
+        Tipo de processamento: 'sql_query', 'sql_query_graphic', 'prediction', 'chart'
     """
-    # Por enquanto, sempre retorna 'sql_query'
-    # No futuro, aqui será implementada a lógica de detecção para:
-    # - sql_query: Consultas SQL normais
-    # - prediction: Solicitações de previsão/ML
-    # - chart: Solicitações de gráficos/visualizações
-
     query_lower = user_query.lower().strip()
 
-    # Palavras-chave para diferentes tipos (preparação futura)
-    prediction_keywords = ['prever', 'predizer', 'previsão', 'forecast', 'predict']
-    chart_keywords = ['gráfico', 'chart', 'plot', 'visualizar', 'mostrar gráfico']
+    # Palavras-chave para diferentes tipos
+    prediction_keywords = ['prever', 'predizer', 'previsão', 'forecast', 'predict', 'tendência', 'projeção']
 
-    # Por enquanto, sempre SQL
-    return 'sql_query'
+    # Palavras-chave para gráficos - expandida para melhor detecção
+    chart_keywords = [
+        'gráfico', 'grafico', 'chart', 'plot', 'visualizar', 'visualização', 'visualizacao',
+        'mostrar gráfico', 'mostrar grafico', 'gerar gráfico', 'gerar grafico',
+        'criar gráfico', 'criar grafico', 'plotar', 'desenhar gráfico', 'desenhar grafico',
+        'exibir gráfico', 'exibir grafico', 'fazer gráfico', 'fazer grafico',
+        'gráfico de', 'grafico de', 'em gráfico', 'em grafico',
+        'barras', 'linha', 'pizza', 'área', 'area', 'histograma',
+        'scatter', 'dispersão', 'dispersao', 'boxplot', 'heatmap'
+    ]
+
+    # Verifica se há solicitação de gráfico
+    has_chart_request = any(keyword in query_lower for keyword in chart_keywords)
+
+    # Verifica se há solicitação de previsão
+    has_prediction_request = any(keyword in query_lower for keyword in prediction_keywords)
+
+    # Lógica de detecção
+    if has_prediction_request:
+        return 'prediction'  # Futuro: agente de ML/previsões
+    elif has_chart_request:
+        return 'sql_query_graphic'  # SQL + Gráfico
+    else:
+        return 'sql_query'  # SQL normal
 
 def prepare_sql_context(user_query: str, db_sample: pd.DataFrame) -> str:
     """
@@ -123,6 +139,8 @@ def prepare_sql_context(user_query: str, db_sample: pd.DataFrame) -> str:
     context = (
         f"""
         Você é um assistente especializado em consultas SQL e análise de dados.
+
+        "SEMPRE RESPONDA O RESULTADO DA QUERY, JAMAIS RESPONDA COM A QUERY REALIZADA, APENAS O RESULTADO DA QUERY"
         
         IMPORTANTE:
         - Responda SEMPRE em português brasileiro, independentemente do idioma da pergunta.
@@ -134,8 +152,7 @@ def prepare_sql_context(user_query: str, db_sample: pd.DataFrame) -> str:
         - Sempre que a instrução exigir múltiplas etapas lógicas (ex: filtrar dados, calcular agregados e depois comparar), DIVIDA a tarefa em subetapas.
         - Para cada etapa, GERE uma query separada, EXPLIQUE o objetivo dela em uma linha antes do SQL, e depois EXECUTE.
         - NÃO tente resolver tudo em uma única query se houver mais de 2 agregações ou comparações cruzadas.
-        - Sempre traga os resultados da query na resposta final. 
-        - O formato da resposta deve ser:
+        - Resolva da seguinte maneira se necessário:
             Passo 1: [descrição curta]
             ```sql
             QUERY 1
@@ -231,3 +248,173 @@ class CacheManager:
     def get_history(self) -> List[Dict[str, Any]]:
         """Retorna histórico completo"""
         return self.history_log
+
+# ==================== FUNÇÕES DE GRÁFICOS ====================
+
+def generate_graph_type_context(user_query: str, sql_query: str, df_columns: List[str], df_sample: pd.DataFrame) -> str:
+    """
+    Gera contexto para LLM escolher o tipo de gráfico mais adequado
+
+    Args:
+        user_query: Pergunta original do usuário
+        sql_query: Query SQL gerada pelo agente
+        df_columns: Lista de colunas retornadas pela query
+        df_sample: Amostra dos dados para análise
+
+    Returns:
+        Contexto formatado para a LLM
+    """
+    # Criar uma descrição dos dados para ajudar a LLM a entender melhor a estrutura
+    data_description = ""
+    if not df_sample.empty:
+        # Verificar tipos de dados
+        numeric_cols = df_sample.select_dtypes(include=['number']).columns.tolist()
+        date_cols = [col for col in df_sample.columns if 'data' in col.lower() or df_sample[col].dtype == 'datetime64[ns]']
+        categorical_cols = df_sample.select_dtypes(include=['object']).columns.tolist()
+
+        # Adicionar informações sobre os primeiros valores de cada coluna
+        data_description = "\nAmostra dos dados:\n"
+        data_description += df_sample.head(3).to_string()
+
+        # Adicionar informações sobre os tipos de dados
+        data_description += "\n\nTipos de colunas:"
+        if numeric_cols:
+            data_description += f"\n- Colunas numéricas: {', '.join(numeric_cols)}"
+        if date_cols:
+            data_description += f"\n- Colunas de data/tempo: {', '.join(date_cols)}"
+        if categorical_cols:
+            data_description += f"\n- Colunas categóricas: {', '.join(categorical_cols)}"
+
+    return (
+        f"Você é um especialista em visualização de dados que escolhe o tipo de gráfico mais adequado para representar dados.\n\n"
+        f"Pergunta do usuário: {user_query}\n\n"
+        f"Query SQL gerada:\n{sql_query}\n\n"
+        f"Colunas retornadas pela query: {', '.join(df_columns)}\n"
+        f"{data_description}\n\n"
+        "Escolha o tipo de gráfico mais adequado para visualizar esses dados. Considere os seguintes tipos de gráficos e suas aplicações:\n\n"
+        "1. Linha Simples → Ideal para mostrar tendências ao longo do tempo ou sequências. Use quando tiver uma coluna de data/tempo/sequência e uma coluna numérica.\n"
+        "2. Multilinhas → Ideal para comparar tendências de diferentes categorias ao longo do tempo. Use quando tiver uma coluna de data/tempo e múltiplas colunas numéricas, ou quando tiver uma coluna categórica que pode ser usada para agrupar os dados.\n"
+        "3. Área → Similar ao gráfico de linha, mas com área preenchida abaixo da linha. Ideal para mostrar volume ao longo do tempo. Use quando tiver uma coluna de data/tempo e uma coluna numérica.\n"
+        "4. Barras Verticais → Ideal para comparar valores entre diferentes categorias. Use quando tiver uma coluna categórica e uma coluna numérica.\n"
+        "5. Barras Horizontais → Similar às barras verticais, mas melhor quando há muitas categorias ou nomes longos. Use quando tiver uma coluna categórica e uma coluna numérica.\n"
+        "6. Barras Agrupadas → Ideal para comparar valores de múltiplas categorias. Use quando tiver uma coluna categórica e múltiplas colunas numéricas para comparação.\n"
+        "7. Barras Empilhadas → Ideal para mostrar partes de um todo por categoria. Use quando tiver uma coluna categórica e múltiplas colunas numéricas que representam partes de um todo.\n"
+        "8. Pizza Simples → Ideal para mostrar proporções de um todo. Use quando tiver uma coluna categórica e uma coluna numérica, com poucas categorias (máximo 7).\n"
+        "9. Dona → Similar ao gráfico de pizza, mas com um espaço no centro. Melhor para visualizar proporções quando há muitas categorias.\n"
+        "10. Pizzas Múltiplas → Ideal para comparar proporções entre diferentes grupos. Use quando tiver duas colunas categóricas e uma coluna numérica.\n\n"
+        "Analise cuidadosamente a pergunta do usuário e os dados retornados. Escolha o tipo de gráfico que melhor representa a informação que o usuário está buscando.\n\n"
+        "Responda apenas com o número do tipo de gráfico mais adequado (1-10). Não inclua explicações ou texto adicional."
+    )
+
+def extract_sql_query_from_response(agent_response: str) -> Optional[str]:
+    """
+    Extrai a query SQL da resposta do agente SQL
+
+    Args:
+        agent_response: Resposta completa do agente SQL
+
+    Returns:
+        Query SQL extraída ou None se não encontrada
+    """
+    if not agent_response:
+        return None
+
+    # Padrões para encontrar SQL na resposta - ordem de prioridade
+    sql_patterns = [
+        # Padrão mais comum: ```sql ... ``` (multiline)
+        r"```sql\s*(.*?)\s*```",
+        # Padrão alternativo: ``` ... ``` com SELECT (multiline)
+        r"```\s*(SELECT.*?)\s*```",
+        # SELECT com múltiplas linhas até ponto e vírgula
+        r"(SELECT\s+.*?;)",
+        # SELECT com múltiplas linhas até quebra dupla ou final
+        r"(SELECT\s+.*?)(?:\n\s*\n|\n\s*$|\n\s*Agora|\n\s*Em seguida)",
+        # Padrões com prefixos específicos
+        r"Query:\s*(SELECT.*?)(?:\n|$|;)",
+        r"SQL:\s*(SELECT.*?)(?:\n|$|;)",
+        r"Consulta:\s*(SELECT.*?)(?:\n|$|;)",
+        # SELECT em uma linha
+        r"(SELECT\s+[^\n]+)",
+    ]
+
+    for i, pattern in enumerate(sql_patterns):
+        matches = re.findall(pattern, agent_response, re.DOTALL | re.IGNORECASE)
+        if matches:
+            # Pega a primeira query encontrada
+            query = matches[0].strip()
+
+            # Limpa a query
+            query = clean_sql_query(query)
+
+            # Verifica se é uma query válida
+            if is_valid_sql_query(query):
+                logging.info(f"[GRAPH] Query SQL extraída (padrão {i+1}): {query[:100]}...")
+                return query
+
+    # Log da resposta para debug se não encontrar SQL
+    logging.warning(f"[GRAPH] Não foi possível extrair query SQL. Resposta (primeiros 200 chars): {agent_response[:200]}...")
+    return None
+
+def clean_sql_query(query: str) -> str:
+    """
+    Limpa e normaliza a query SQL extraída
+
+    Args:
+        query: Query SQL bruta
+
+    Returns:
+        Query SQL limpa
+    """
+    if not query:
+        return ""
+
+    # Remove espaços extras e quebras de linha desnecessárias
+    query = re.sub(r'\s+', ' ', query.strip())
+
+    # Remove ponto e vírgula no final se existir
+    if query.endswith(';'):
+        query = query[:-1].strip()
+
+    # Remove aspas ou caracteres especiais no início/fim
+    query = query.strip('`"\'')
+
+    return query
+
+def is_valid_sql_query(query: str) -> bool:
+    """
+    Verifica se a string é uma query SQL válida
+
+    Args:
+        query: String para verificar
+
+    Returns:
+        True se for uma query SQL válida
+    """
+    if not query or len(query.strip()) < 6:  # Mínimo para "SELECT"
+        return False
+
+    # Verifica se começa com comando SQL válido
+    sql_commands = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'WITH']
+    query_upper = query.strip().upper()
+
+    return any(query_upper.startswith(cmd) for cmd in sql_commands)
+
+def get_graph_type_mapping() -> Dict[str, str]:
+    """
+    Retorna mapeamento de números para tipos de gráfico
+
+    Returns:
+        Dicionário com mapeamento número -> tipo
+    """
+    return {
+        "1": "line_simple",
+        "2": "multiline",
+        "3": "area",
+        "4": "bar_vertical",
+        "5": "bar_horizontal",
+        "6": "bar_grouped",
+        "7": "bar_stacked",
+        "8": "pie",
+        "9": "donut",
+        "10": "pie_multiple"
+    }

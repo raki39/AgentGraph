@@ -4,11 +4,13 @@ Criação e configuração do agente SQL
 import logging
 import time
 import asyncio
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_community.utilities import SQLDatabase
+from langchain.callbacks.base import BaseCallbackHandler
+from langchain.schema import AgentAction, AgentFinish
 
 
 from utils.config import (
@@ -18,6 +20,74 @@ from utils.config import (
     OPENAI_MODELS,
     ANTHROPIC_MODELS
 )
+
+class SQLQueryCaptureHandler(BaseCallbackHandler):
+    """
+    Handler para capturar queries SQL executadas pelo agente
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.sql_queries: List[str] = []
+        self.agent_actions: List[Dict[str, Any]] = []
+        self.step_count = 0
+
+    def on_agent_action(self, action: AgentAction, **kwargs) -> None:
+        """
+        Captura ações do agente, especialmente queries SQL
+
+        Args:
+            action: Ação do agente
+        """
+        try:
+            self.step_count += 1
+            tool_name = action.tool
+            tool_input = action.tool_input
+
+            # Capturar SQL especificamente (sem log de cada passo)
+            if tool_name == 'sql_db_query' and isinstance(tool_input, dict):
+                sql_query = tool_input.get('query', '')
+                if sql_query and sql_query.strip():
+                    clean_query = sql_query.strip()
+                    self.sql_queries.append(clean_query)
+
+                    # Log apenas uma vez com query completa
+                    logging.info(f"[SQL_HANDLER] 🔍 Query SQL capturada:\n{clean_query}")
+
+            # Armazenar todas as ações para debug
+            self.agent_actions.append({
+                "step": self.step_count,
+                "tool": tool_name,
+                "input": tool_input,
+                "timestamp": time.time()
+            })
+
+        except Exception as e:
+            logging.error(f"[SQL_HANDLER] Erro ao capturar ação: {e}")
+
+    def get_last_sql_query(self) -> Optional[str]:
+        """
+        Retorna a última query SQL capturada
+
+        Returns:
+            Última query SQL ou None se não houver
+        """
+        return self.sql_queries[-1] if self.sql_queries else None
+
+    def get_all_sql_queries(self) -> List[str]:
+        """
+        Retorna todas as queries SQL capturadas
+
+        Returns:
+            Lista de queries SQL
+        """
+        return self.sql_queries.copy()
+
+    def reset(self):
+        """Reseta o handler para nova execução"""
+        self.sql_queries.clear()
+        self.agent_actions.clear()
+        self.step_count = 0
 
 async def retry_with_backoff(func, max_retries=3, base_delay=1.0):
     """
@@ -111,7 +181,7 @@ def create_sql_agent_executor(db: SQLDatabase, model_name: str = "gpt-4o-mini"):
             verbose=True,
             max_iterations=MAX_ITERATIONS,
             return_intermediate_steps=True,
-            top_k=40
+            top_k=20
         )
 
         logging.info(f"Agente SQL criado com sucesso usando modelo {model_name} ({model_id}) com agent_type={agent_type}")
@@ -206,6 +276,9 @@ class SQLAgentManager:
         try:
             logging.info("------- Agent SQL: Executando query -------")
 
+            # Criar handler para capturar SQL
+            sql_handler = SQLQueryCaptureHandler()
+
             # Verifica se é agente Claude para aplicar retry
             model_id = getattr(self, 'model_name', '')
             is_claude = any(claude_model in model_id for claude_model in ANTHROPIC_MODELS)
@@ -213,22 +286,33 @@ class SQLAgentManager:
             if is_claude:
                 # Usa retry com backoff para Claude
                 response = await retry_with_backoff(
-                    lambda: self.agent.invoke({"input": instruction}),
+                    lambda: self.agent.invoke(
+                        {"input": instruction},
+                        {"callbacks": [sql_handler]}
+                    ),
                     max_retries=3,
                     base_delay=2.0
                 )
             else:
                 # Execução normal para outros modelos
-                response = self.agent.invoke({"input": instruction})
+                response = self.agent.invoke(
+                    {"input": instruction},
+                    {"callbacks": [sql_handler]}
+                )
 
             # Extrai e limpa a resposta
             raw_output = response.get("output", "Erro ao obter a resposta do agente.")
             clean_output = self._extract_text_from_claude_response(raw_output)
 
+            # Captura a última query SQL executada
+            sql_query = sql_handler.get_last_sql_query()
+
             result = {
                 "output": clean_output,
                 "intermediate_steps": response.get("intermediate_steps", []),
-                "success": True
+                "success": True,
+                "sql_query": sql_query,  # ← Query SQL capturada
+                "all_sql_queries": sql_handler.get_all_sql_queries()
             }
 
             logging.info(f"Query executada com sucesso: {result['output'][:100]}...")

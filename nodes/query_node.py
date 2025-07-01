@@ -79,16 +79,17 @@ async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
         
         # Detecta tipo de query e prepara contexto
         query_type = detect_query_type(user_input)
+        state["query_type"] = query_type
 
-        if query_type == 'sql_query':
+        if query_type in ['sql_query', 'sql_query_graphic']:
             # Prepara contexto para envio direto ao agentSQL
             sql_context = prepare_sql_context(user_input, db_sample)
             state["sql_context"] = sql_context
-            state["query_type"] = query_type
 
+            logging.info(f"[DEBUG] Tipo de query detectado: {query_type}")
             logging.info(f"[DEBUG] Contexto preparado para agentSQL:\n{sql_context}\n")
         else:
-            # Para tipos futuros (prediction, chart)
+            # Para tipos futuros (prediction)
             error_msg = f"Tipo de query '{query_type}' ainda não implementado."
             state.update({
                 "error": error_msg,
@@ -116,12 +117,20 @@ async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 "sql_result": sql_result
             })
         else:
+            # Captura query SQL do resultado do agente
+            sql_query_captured = sql_result.get("sql_query")
+
             state.update({
                 "response": sql_result["output"],
                 "intermediate_steps": sql_result["intermediate_steps"],
                 "sql_result": sql_result,
+                "sql_query_extracted": sql_query_captured,  # ← Query SQL capturada
                 "error": None
             })
+
+            # Log apenas se não foi capturada (caso de erro)
+            if not sql_query_captured:
+                logging.warning("[QUERY] ⚠️ Nenhuma query SQL foi capturada pelo handler")
         
         # Armazena no cache se disponível
         if cache_manager and sql_result["success"]:
