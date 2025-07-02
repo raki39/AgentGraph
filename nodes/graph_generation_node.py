@@ -338,20 +338,42 @@ async def generate_bar_vertical(df: pd.DataFrame, title: str, colors) -> Optiona
 
     x_col, y_col = df.columns[0], df.columns[1]
 
+    # Preparar dados numéricos - converter strings com vírgula para float
+    df_plot = df.copy()
+    try:
+        if df_plot[y_col].dtype == 'object':
+            # Converte strings para números, tratando vírgulas como separador decimal
+            df_plot[y_col] = pd.to_numeric(df_plot[y_col].astype(str).str.replace(',', '.'), errors='coerce')
+
+        # Remove linhas com valores não numéricos
+        df_plot = df_plot.dropna(subset=[y_col])
+
+        if df_plot.empty:
+            logging.error(f"[GRAPH_GENERATION] Nenhum valor numérico válido encontrado na coluna {y_col}")
+            return None
+
+    except Exception as e:
+        logging.error(f"[GRAPH_GENERATION] Erro ao converter dados para numérico: {e}")
+        return None
+
     plt.figure(figsize=(12, 8))
-    bars = plt.bar(range(len(df)), df[y_col], color=colors[0])
+    bars = plt.bar(range(len(df_plot)), df_plot[y_col], color=colors[0])
 
     # Adicionar valores nas barras
-    for i, bar in enumerate(bars):
-        height = bar.get_height()
-        if isinstance(height, (int, float)):
-            plt.text(bar.get_x() + bar.get_width()/2., height + 0.02 * max(df[y_col]),
-                    f'{height:.2f}', ha='center', fontsize=9)
+    try:
+        max_value = df_plot[y_col].max()
+        for i, bar in enumerate(bars):
+            height = bar.get_height()
+            if isinstance(height, (int, float)) and not pd.isna(height):
+                plt.text(bar.get_x() + bar.get_width()/2., height + 0.02 * max_value,
+                        f'{height:,.0f}', ha='center', fontsize=9)
+    except Exception as e:
+        logging.warning(f"[GRAPH_GENERATION] Erro ao adicionar valores nas barras: {e}")
 
     plt.xlabel(x_col)
     plt.ylabel(y_col)
     plt.title(title or f"{y_col} por {x_col}")
-    plt.xticks(range(len(df)), df[x_col], rotation=45, ha='right')
+    plt.xticks(range(len(df_plot)), df_plot[x_col], rotation=45, ha='right')
     plt.grid(True, linestyle='--', alpha=0.7, axis='y')
     plt.tight_layout()
 
@@ -364,20 +386,42 @@ async def generate_bar_horizontal(df: pd.DataFrame, title: str, colors) -> Optio
 
     x_col, y_col = df.columns[0], df.columns[1]
 
-    plt.figure(figsize=(12, max(6, len(df) * 0.4)))
-    bars = plt.barh(range(len(df)), df[y_col], color=colors[0])
+    # Preparar dados numéricos - converter strings com vírgula para float
+    df_plot = df.copy()
+    try:
+        if df_plot[y_col].dtype == 'object':
+            # Converte strings para números, tratando vírgulas como separador decimal
+            df_plot[y_col] = pd.to_numeric(df_plot[y_col].astype(str).str.replace(',', '.'), errors='coerce')
+
+        # Remove linhas com valores não numéricos
+        df_plot = df_plot.dropna(subset=[y_col])
+
+        if df_plot.empty:
+            logging.error(f"[GRAPH_GENERATION] Nenhum valor numérico válido encontrado na coluna {y_col}")
+            return None
+
+    except Exception as e:
+        logging.error(f"[GRAPH_GENERATION] Erro ao converter dados para numérico: {e}")
+        return None
+
+    plt.figure(figsize=(12, max(6, len(df_plot) * 0.4)))
+    bars = plt.barh(range(len(df_plot)), df_plot[y_col], color=colors[0])
 
     # Adicionar valores nas barras
-    for i, bar in enumerate(bars):
-        width = bar.get_width()
-        if isinstance(width, (int, float)):
-            plt.text(width + 0.02 * max(df[y_col]), bar.get_y() + bar.get_height()/2.,
-                    f'{width:.2f}', va='center', fontsize=9)
+    try:
+        max_value = df_plot[y_col].max()
+        for i, bar in enumerate(bars):
+            width = bar.get_width()
+            if isinstance(width, (int, float)) and not pd.isna(width):
+                plt.text(width + 0.02 * max_value, bar.get_y() + bar.get_height()/2.,
+                        f'{width:,.0f}', va='center', fontsize=9)
+    except Exception as e:
+        logging.warning(f"[GRAPH_GENERATION] Erro ao adicionar valores nas barras: {e}")
 
     plt.xlabel(y_col)
     plt.ylabel(x_col)
     plt.title(title or f"{y_col} por {x_col}")
-    plt.yticks(range(len(df)), df[x_col])
+    plt.yticks(range(len(df_plot)), df_plot[x_col])
     plt.grid(True, linestyle='--', alpha=0.7, axis='x')
     plt.tight_layout()
 
@@ -464,23 +508,33 @@ async def generate_pie(df: pd.DataFrame, title: str, colors) -> Optional[Image.I
 
     label_col, value_col = df.columns[0], df.columns[1]
 
-    # Verificar se os valores são numéricos
-    if not pd.api.types.is_numeric_dtype(df[value_col]):
-        return await generate_bar_vertical(df, title, colors)
+    # Preparar dados numéricos - converter strings com vírgula para float
+    df_plot = df.copy()
+    try:
+        if df_plot[value_col].dtype == 'object':
+            # Converte strings para números, tratando vírgulas como separador decimal
+            df_plot[value_col] = pd.to_numeric(df_plot[value_col].astype(str).str.replace(',', '.'), errors='coerce')
 
-    # Remover valores negativos ou zero
-    df_clean = df[df[value_col] > 0]
-    if df_clean.empty:
-        return None
+        # Remove linhas com valores não numéricos, negativos ou zero
+        df_plot = df_plot.dropna(subset=[value_col])
+        df_plot = df_plot[df_plot[value_col] > 0]
+
+        if df_plot.empty:
+            logging.error(f"[GRAPH_GENERATION] Nenhum valor numérico positivo encontrado na coluna {value_col}")
+            return await generate_bar_vertical(df, title, colors)
+
+    except Exception as e:
+        logging.error(f"[GRAPH_GENERATION] Erro ao converter dados para numérico: {e}")
+        return await generate_bar_vertical(df, title, colors)
 
     plt.figure(figsize=(10, 10))
 
     # Calcular percentuais para os rótulos
-    total = df_clean[value_col].sum()
-    labels = [f'{label} ({val:.2f}, {val/total:.1%})' for label, val in zip(df_clean[label_col], df_clean[value_col])]
+    total = df_plot[value_col].sum()
+    labels = [f'{label} ({val:,.0f}, {val/total:.1%})' for label, val in zip(df_plot[label_col], df_plot[value_col])]
 
-    plt.pie(df_clean[value_col], labels=labels, autopct='%1.1f%%',
-            startangle=90, shadow=False, colors=colors[:len(df_clean)])
+    plt.pie(df_plot[value_col], labels=labels, autopct='%1.1f%%',
+            startangle=90, shadow=False, colors=colors[:len(df_plot)])
 
     plt.axis('equal')
     plt.title(title or f"Distribuição de {value_col} por {label_col}")
@@ -495,24 +549,34 @@ async def generate_donut(df: pd.DataFrame, title: str, colors) -> Optional[Image
 
     label_col, value_col = df.columns[0], df.columns[1]
 
-    # Verificar se os valores são numéricos
-    if not pd.api.types.is_numeric_dtype(df[value_col]):
-        return await generate_bar_vertical(df, title, colors)
+    # Preparar dados numéricos - converter strings com vírgula para float
+    df_plot = df.copy()
+    try:
+        if df_plot[value_col].dtype == 'object':
+            # Converte strings para números, tratando vírgulas como separador decimal
+            df_plot[value_col] = pd.to_numeric(df_plot[value_col].astype(str).str.replace(',', '.'), errors='coerce')
 
-    # Remover valores negativos ou zero
-    df_clean = df[df[value_col] > 0]
-    if df_clean.empty:
-        return None
+        # Remove linhas com valores não numéricos, negativos ou zero
+        df_plot = df_plot.dropna(subset=[value_col])
+        df_plot = df_plot[df_plot[value_col] > 0]
+
+        if df_plot.empty:
+            logging.error(f"[GRAPH_GENERATION] Nenhum valor numérico positivo encontrado na coluna {value_col}")
+            return await generate_bar_vertical(df, title, colors)
+
+    except Exception as e:
+        logging.error(f"[GRAPH_GENERATION] Erro ao converter dados para numérico: {e}")
+        return await generate_bar_vertical(df, title, colors)
 
     plt.figure(figsize=(10, 10))
 
     # Calcular percentuais para os rótulos
-    total = df_clean[value_col].sum()
-    labels = [f'{label} ({val:.2f}, {val/total:.1%})' for label, val in zip(df_clean[label_col], df_clean[value_col])]
+    total = df_plot[value_col].sum()
+    labels = [f'{label} ({val:,.0f}, {val/total:.1%})' for label, val in zip(df_plot[label_col], df_plot[value_col])]
 
     # Criar gráfico de donut (pizza com círculo central)
-    plt.pie(df_clean[value_col], labels=labels, autopct='%1.1f%%',
-            startangle=90, shadow=False, colors=colors[:len(df_clean)],
+    plt.pie(df_plot[value_col], labels=labels, autopct='%1.1f%%',
+            startangle=90, shadow=False, colors=colors[:len(df_plot)],
             wedgeprops=dict(width=0.5))  # Largura do anel
 
     plt.axis('equal')

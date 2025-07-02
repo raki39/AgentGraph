@@ -1,136 +1,87 @@
 """
-Nó para seleção do tipo de gráfico usando LLM
+Nó para seleção do tipo de gráfico usando LLM - REFATORADO COMPLETO
 """
 import logging
 import re
 import pandas as pd
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from agents.tools import (
-    generate_graph_type_context, 
-    extract_sql_query_from_response,
-    get_graph_type_mapping,
-    hf_client
+    generate_graph_type_context,
+    extract_sql_query_from_response
 )
-from utils.config import REFINEMENT_MODELS
+from utils.config import OPENAI_API_KEY
+from langchain_openai import ChatOpenAI
 from utils.object_manager import get_object_manager
+
+# Mapeamento DIRETO no arquivo para evitar problemas externos
+GRAPH_TYPE_MAPPING = {
+    "1": "line_simple",
+    "2": "multiline",
+    "3": "area",
+    "4": "bar_vertical",
+    "5": "bar_horizontal",
+    "6": "bar_grouped",
+    "7": "bar_stacked",
+    "8": "pie",
+    "9": "donut",
+    "10": "pie_multiple"
+}
 
 async def graph_selection_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Nó para seleção do tipo de gráfico usando LLM
-    
-    Args:
-        state: Estado atual do agente
-        
-    Returns:
-        Estado atualizado com tipo de gráfico selecionado
+    Nó REFATORADO para seleção do tipo de gráfico usando LLM
     """
+    logging.info("[GRAPH_SELECTION_NEW] 🚀 Iniciando seleção REFATORADA")
+
     try:
-        logging.info("[GRAPH_SELECTION] Iniciando seleção de tipo de gráfico")
-        
-        # Verifica se deve gerar gráfico
-        query_type = state.get("query_type", "sql_query")
-        if query_type != "sql_query_graphic":
-            logging.info("[GRAPH_SELECTION] Tipo de query não requer gráfico, pulando seleção")
+        # 1. Verificações básicas
+        if state.get("query_type") != "sql_query_graphic":
+            logging.info("[GRAPH_SELECTION_NEW] Query não requer gráfico")
             return state
-        
-        # Usa query SQL capturada pelo handler (método mais confiável)
+
+        # 2. Obter SQL query
         sql_query = state.get("sql_query_extracted")
+        if not sql_query:
+            sql_query = extract_sql_query_from_response(state.get("response", ""))
 
         if not sql_query:
-            # Fallback: tenta extrair da resposta (método antigo)
-            agent_response = state.get("response", "")
-            logging.warning(f"[GRAPH_SELECTION] ⚠️ Handler não capturou SQL, tentando fallback...")
-            sql_query = extract_sql_query_from_response(agent_response)
-
-        if not sql_query:
-            error_msg = "Não foi possível obter query SQL (nem pelo handler nem pela resposta)"
-            logging.error(f"[GRAPH_SELECTION] ❌ {error_msg}")
-            state.update({
-                "graph_error": error_msg,
-                "graph_generated": False
-            })
+            logging.error("[GRAPH_SELECTION_NEW] ❌ SQL query não encontrada")
+            state.update({"graph_error": "SQL query não encontrada", "graph_generated": False})
             return state
 
-        state["sql_query_extracted"] = sql_query
-        logging.info(f"[GRAPH_SELECTION] 🔍 Usando Query SQL:\n{sql_query}")
-        
-        # Recupera dados do banco para análise
+        # 3. Obter dados
         obj_manager = get_object_manager()
-        engine_id = state.get("engine_id")
-        
-        if not engine_id:
-            error_msg = "ID do engine não encontrado"
-            logging.error(f"[GRAPH_SELECTION] {error_msg}")
-            state.update({
-                "graph_error": error_msg,
-                "graph_generated": False
-            })
-            return state
-        
-        engine = obj_manager.get_engine(engine_id)
+        engine = obj_manager.get_engine(state.get("engine_id"))
         if not engine:
-            error_msg = "Engine não encontrada no ObjectManager"
-            logging.error(f"[GRAPH_SELECTION] {error_msg}")
-            state.update({
-                "graph_error": error_msg,
-                "graph_generated": False
-            })
+            logging.error("[GRAPH_SELECTION_NEW] ❌ Engine não encontrada")
+            state.update({"graph_error": "Engine não encontrada", "graph_generated": False})
             return state
-        
-        # Executa query para obter dados
+
+        # 4. Executar query
         try:
             df_result = pd.read_sql_query(sql_query, engine)
-            logging.info(f"[GRAPH_SELECTION] Dados obtidos: {len(df_result)} linhas, {len(df_result.columns)} colunas")
-            
             if df_result.empty:
-                error_msg = "Query SQL retornou dados vazios"
-                logging.warning(f"[GRAPH_SELECTION] {error_msg}")
-                state.update({
-                    "graph_error": error_msg,
-                    "graph_generated": False
-                })
+                logging.error("[GRAPH_SELECTION_NEW] ❌ Dados vazios")
+                state.update({"graph_error": "Dados vazios", "graph_generated": False})
                 return state
-            
         except Exception as e:
-            error_msg = f"Erro ao executar query SQL: {e}"
-            logging.error(f"[GRAPH_SELECTION] {error_msg}")
-            state.update({
-                "graph_error": error_msg,
-                "graph_generated": False
-            })
+            logging.error(f"[GRAPH_SELECTION_NEW] ❌ Erro na query: {e}")
+            state.update({"graph_error": f"Erro na query: {e}", "graph_generated": False})
             return state
-        
-        # Prepara amostra dos dados para análise
-        df_sample = df_result.head(3)
-        
-        # Gera contexto para LLM escolher tipo de gráfico
+
+        # 5. Preparar contexto
         user_query = state.get("user_input", "")
-        graph_context = generate_graph_type_context(
-            user_query, 
-            sql_query, 
-            df_result.columns.tolist(), 
-            df_sample
-        )
-        
-        logging.info(f"[GRAPH_SELECTION] Enviando contexto para LLM escolher tipo de gráfico")
-        
-        # Consulta LLM para escolher tipo de gráfico
-        graph_type = await get_graph_type_with_llm(graph_context)
-        
-        if not graph_type:
-            error_msg = "LLM não conseguiu determinar tipo de gráfico"
-            logging.error(f"[GRAPH_SELECTION] {error_msg}")
-            state.update({
-                "graph_error": error_msg,
-                "graph_generated": False
-            })
-            return state
-        
-        # Armazena dados do gráfico no ObjectManager
+        df_sample = df_result.head(3)
+        graph_context = generate_graph_type_context(user_query, sql_query, df_result.columns.tolist(), df_sample)
+
+        # 6. Chamar LLM de forma LIMPA
+        graph_type = await call_llm_for_graph_selection(graph_context, user_query)
+
+        logging.error(f"🎯 [RESULTADO_FINAL] Tipo selecionado: '{graph_type}'")
+
+        # 7. Armazenar resultado
         graph_data_id = obj_manager.store_object(df_result, "graph_data")
-        
-        # Atualiza estado com informações do gráfico
         state.update({
             "graph_type": graph_type,
             "graph_data": {
@@ -141,55 +92,56 @@ async def graph_selection_node(state: Dict[str, Any]) -> Dict[str, Any]:
             },
             "graph_error": None
         })
-        
-        logging.info(f"[GRAPH_SELECTION] Tipo de gráfico selecionado: {graph_type}")
-        
-    except Exception as e:
-        error_msg = f"Erro na seleção de gráfico: {e}"
-        logging.error(f"[GRAPH_SELECTION] {error_msg}")
-        state.update({
-            "graph_error": error_msg,
-            "graph_generated": False
-        })
-    
-    return state
 
-async def get_graph_type_with_llm(graph_context: str) -> str:
+        return state
+
+    except Exception as e:
+        logging.error(f"[GRAPH_SELECTION_NEW] ❌ Erro geral: {e}")
+        state.update({"graph_error": f"Erro geral: {e}", "graph_generated": False})
+        return state
+
+async def call_llm_for_graph_selection(graph_context: str, user_query: str) -> str:
     """
-    Consulta LLM para determinar o tipo de gráfico mais adequado
-    
-    Args:
-        graph_context: Contexto formatado para a LLM
-        
-    Returns:
-        Tipo de gráfico selecionado
+    Função NOVA e LIMPA para chamar LLM sem interferências
     """
+    logging.error("🔥 [LLM_CALL] Iniciando chamada LIMPA da LLM")
+
+    # Verificação básica
+    if not OPENAI_API_KEY:
+        logging.error("🔥 [LLM_CALL] OpenAI não configurada")
+        return "line_simple"
+
     try:
-        # Usa modelo de refinamento para escolha do gráfico
-        response = hf_client.chat.completions.create(
-            model=REFINEMENT_MODELS["LLaMA 70B"],
-            messages=[{"role": "system", "content": graph_context}],
-            max_tokens=10,
-            stream=False
+        # Criar LLM com configuração limpa
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0,
+            max_tokens=5,
+            timeout=30
         )
-        
-        llm_response = response["choices"][0]["message"]["content"].strip()
-        logging.info(f"[GRAPH_SELECTION] Resposta da LLM: {llm_response}")
-        
-        # Mapear a resposta numérica para o tipo de gráfico
-        graph_type_map = get_graph_type_mapping()
-        
-        # Extrair apenas o número da resposta
-        match = re.search(r"\b([1-9]|10)\b", llm_response)
-        if match:
-            graph_number = match.group(0)
-            graph_type = graph_type_map.get(graph_number, "bar_vertical")
-            logging.info(f"[GRAPH_SELECTION] Tipo escolhido: {graph_type} (número {graph_number})")
+
+        # Log do contexto
+        logging.error("🔥 [LLM_CALL] Contexto enviado:")
+        logging.error(f"'{graph_context}...'")
+
+        # Agora a pergunta real
+        real_response = llm.invoke(graph_context)
+        real_content = real_response.content.strip()
+
+        logging.error(f"🔥 [LLM_CALL] Resposta REAL: '{real_content}'")
+
+        # Extrair número da resposta
+        number_match = re.search(r'\b([1-9]|10)\b', real_content)
+        if number_match:
+            number = number_match.group(0)
+            graph_type = GRAPH_TYPE_MAPPING.get(number, "line_simple")
+            logging.error(f"🔥 [LLM_CALL] Número: {number} → Tipo: {graph_type}")
             return graph_type
         else:
-            logging.warning("[GRAPH_SELECTION] Não foi possível extrair número válido da resposta")
-            return "bar_vertical"  # Default
-            
+            logging.error(f"🔥 [LLM_CALL] Número não encontrado em: '{real_content}'")
+            return "line_simple"
+
     except Exception as e:
-        logging.error(f"[GRAPH_SELECTION] Erro ao consultar LLM: {e}")
-        return "bar_vertical"  # Default em caso de erro
+        logging.error(f"🔥 [LLM_CALL] ERRO: {e}")
+        return "line_simple"
+

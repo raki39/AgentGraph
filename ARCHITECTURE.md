@@ -7,9 +7,10 @@ O AgentGraph é uma **plataforma multi-agente** construída com LangGraph, imple
 ### **Principais Inovações Arquiteturais**
 - 🔄 **Fluxo Otimizado**: Detecção → AgentSQL → Refinamento (sem LLM intermediária)
 - 🧠 **Multi-Provedor**: Suporte nativo a OpenAI, Anthropic e HuggingFace
-- 🛠️ **Tool-Calling**: Ferramentas SQL nativas com verbose ativo
+- 🛠️ **Tool-Calling**: Ferramentas SQL nativas with verbose ativo
 - 🎛️ **Object Manager**: Solução elegante para objetos não-serializáveis
 - ⚡ **Async/Await**: Processamento não-bloqueante em toda a stack
+- 🔍 **LangSmith Integration**: Observabilidade completa com rastreamento automático
 
 ## 📁 Estrutura do Projeto
 
@@ -103,6 +104,35 @@ graph TD
   - Atualização de histórico
   - Estatísticas de uso
 
+## 🔍 Integração LangSmith
+
+### **Observabilidade Automática**
+O AgentGraph inclui integração completa com LangSmith para rastreamento e monitoramento:
+
+```python
+# Configuração automática via variáveis de ambiente
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_pt_...
+LANGSMITH_PROJECT=agentgraph-project
+
+# Rastreamento automático de todo o fluxo LangGraph
+workflow.invoke(state) # ← Automaticamente rastreado
+```
+
+### **Componentes Rastreados**
+- ✅ **Todos os nós LangGraph**: validate_input → process_query → cache_response
+- ✅ **Agentes SQL**: Chamadas LLM com inputs/outputs completos
+- ✅ **Modelos Multi-Provedor**: OpenAI, Anthropic, HuggingFace
+- ✅ **Operações de Dados**: CSV processing, database operations
+- ✅ **Geração de Gráficos**: Seleção e criação de visualizações
+
+### **Benefícios da Integração**
+- 🔍 **Debug Avançado**: Visualize fluxo completo de execução
+- 📊 **Métricas de Performance**: Latência por nó e operação
+- 💰 **Análise de Custos**: Uso de tokens por modelo
+- 🐛 **Troubleshooting**: Identifique gargalos e erros
+- 📈 **Dashboards**: Monitoramento em tempo real
+
 ## 🧠 Gerenciador de Objetos
 
 ### Problema Resolvido
@@ -159,6 +189,13 @@ sql_agent = object_manager.get_sql_agent(agent_id)
 # API Keys
 HUGGINGFACE_API_KEY=your_key_here
 OPENAI_API_KEY=your_key_here
+ANTHROPIC_API_KEY=your_key_here
+
+# LangSmith - Observabilidade (OPCIONAL)
+LANGSMITH_API_KEY=lsv2_pt_your_key_here
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_PROJECT=agentgraph-project
 
 # Database Configuration
 SQL_DB_PATH=data.db
@@ -166,7 +203,7 @@ DEFAULT_CSV_PATH=tabela.csv
 UPLOAD_DIR=uploaded_data
 
 # Model Configuration
-DEFAULT_MODEL=LLaMA 70B
+DEFAULT_MODEL=GPT-4o-mini
 MAX_ITERATIONS=40
 TEMPERATURE=0
 
@@ -194,6 +231,7 @@ GRADIO_PORT=7860
 - Validação automática de sistema
 - Detecção automática de portas
 - Logs estruturados
+- **Integração LangSmith**: Observabilidade completa e automática
 
 ## 🧪 Testes
 

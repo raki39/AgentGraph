@@ -15,7 +15,9 @@ from utils.config import (
     DEFAULT_MODEL,
     GRADIO_SHARE,
     GRADIO_PORT,
-    validate_config
+    validate_config,
+    is_langsmith_enabled,
+    LANGSMITH_PROJECT
 )
 from utils.object_manager import get_object_manager
 
@@ -39,7 +41,14 @@ async def initialize_app():
         
         # Inicializa o grafo
         graph_manager = await initialize_graph()
-        
+
+        # Informa sobre o status do LangSmith
+        if is_langsmith_enabled():
+            logging.info(f"✅ LangSmith habilitado - Projeto: '{LANGSMITH_PROJECT}'")
+            logging.info("🔍 Traces serão enviados para LangSmith automaticamente")
+        else:
+            logging.info("ℹ️ LangSmith não configurado - Executando sem observabilidade")
+
         logging.info("Aplicação inicializada com sucesso")
         return True
         
@@ -312,7 +321,7 @@ def create_interface():
     """
 
     with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
-        
+
         with gr.Row():
             with gr.Column(scale=1):
                 gr.Markdown("## Configurações")
@@ -320,12 +329,19 @@ def create_interface():
                 csv_file = gr.File(file_types=[".csv"], label="")
                 upload_feedback = gr.Markdown()
                 advanced_checkbox = gr.Checkbox(label="Refinar Resposta")
+
+                # Status do LangSmith
+                if is_langsmith_enabled():
+                    gr.Markdown(f"🔍 **LangSmith**: ✅ Ativo\n📊 **Projeto**: `{LANGSMITH_PROJECT}`")
+                else:
+                    gr.Markdown("🔍 **LangSmith**: ❌ Desabilitado")
+
                 reset_btn = gr.Button("Resetar")
                 
             with gr.Column(scale=4):
                 gr.Markdown("## Reasoning Agent")
                 chatbot = gr.Chatbot(
-                    height=400,
+                    height=600,
                     show_label=False,
                     container=True,
                     type="messages"

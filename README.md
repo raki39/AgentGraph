@@ -20,6 +20,13 @@ Uma plataforma inteligente de agentes especializados que utiliza LangGraph para 
 - Gerenciamento inteligente de objetos não-serializáveis
 - Sistema de retry com backoff exponencial
 
+### 🔍 **Observabilidade com LangSmith**
+- Rastreamento completo de execuções LangGraph
+- Monitoramento de performance em tempo real
+- Debug avançado de agentes e fluxos
+- Análise de custos e uso de tokens
+- Dashboards de observabilidade integrados
+
 ### 🌐 **Interface Moderna**
 - Interface Gradio responsiva e centralizada
 - Configurações separadas do chat principal
@@ -82,6 +89,12 @@ HUGGINGFACE_API_KEY=hf_your_key_here
 OPENAI_API_KEY=sk-your_key_here
 ANTHROPIC_API_KEY=sk-ant-your_key_here
 
+# 🔍 LangSmith - Observabilidade (OPCIONAL)
+LANGSMITH_API_KEY=lsv2_pt_your_key_here
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_PROJECT=agentgraph-project
+
 # 🗄️ Configurações de Banco
 SQL_DB_PATH=data.db
 DEFAULT_CSV_PATH=tabela.csv
@@ -103,6 +116,26 @@ python app.py
 ```
 
 🎉 **Pronto!** Acesse `http://localhost:7860` no seu navegador.
+
+### 5. **Configure LangSmith (Opcional)**
+Para habilitar observabilidade avançada:
+
+1. **Crie conta** em [LangSmith](https://smith.langchain.com/)
+2. **Obtenha API Key** no dashboard
+3. **Configure no .env**:
+   ```env
+   LANGSMITH_API_KEY=lsv2_pt_your_key_here
+   LANGSMITH_TRACING=true
+   LANGSMITH_PROJECT=agentgraph-project
+   ```
+4. **Reinicie** a aplicação
+
+✨ **Com LangSmith você terá**:
+- 🔍 Rastreamento completo de execuções
+- 📊 Dashboards de performance
+- 🐛 Debug avançado de agentes
+- 💰 Análise de custos de tokens
+- 📈 Métricas de uso em tempo real
 
 ## 💡 Como Usar
 
@@ -134,11 +167,29 @@ python app.py
 "Análise de tendências mensais"
 ```
 
+## 🧪 Verificação e Testes
+
+### **Verificação Rápida**
+```bash
+# Verifica configuração LangSmith
+python check_langsmith_setup.py
+
+# Teste completo de integração
+python test_langsmith_integration.py
+```
+
+### **Arquivos de Teste Disponíveis**
+- `check_langsmith_setup.py` - Verificação rápida de configuração
+- `test_langsmith_integration.py` - Teste completo de integração
+- `test_new_architecture.py` - Teste da arquitetura LangGraph
+- `test_graph_functionality.py` - Teste de funcionalidades de gráficos
+
 ## 🛠️ Tecnologias
 
 ### **Core Framework**
 - **LangGraph**: Orquestração de agentes com nós especializados
 - **LangChain**: Framework de LLM com tool-calling
+- **LangSmith**: Observabilidade e rastreamento avançado
 - **Gradio**: Interface web moderna e responsiva
 
 ### **Processamento de Dados**

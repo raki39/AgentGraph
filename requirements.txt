@@ -6,6 +6,9 @@ langchain-anthropic>=0.2.0
 langchain-community>=0.3.0
 langchain-core>=0.3.0
 
+# LangSmith for observability and tracing
+langsmith>=0.1.39
+
 # Database and Data Processing
 pandas>=2.0.0
 sqlalchemy>=2.0.0

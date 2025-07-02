@@ -140,7 +140,8 @@ def prepare_sql_context(user_query: str, db_sample: pd.DataFrame) -> str:
         f"""
         Você é um assistente especializado em consultas SQL e análise de dados.
 
-        "SEMPRE RESPONDA O RESULTADO DA QUERY, JAMAIS RESPONDA COM A QUERY REALIZADA, APENAS O RESULTADO DA QUERY"
+        REGRAS OBRIGATORIAS:
+        - “Retorne exclusivamente os resultados da consulta em formato legível, sem incluir o texto da query SQL executada ou qualquer explicação sobre ela.”
         
         IMPORTANTE:
         - Responda SEMPRE em português brasileiro, independentemente do idioma da pergunta.
@@ -152,16 +153,6 @@ def prepare_sql_context(user_query: str, db_sample: pd.DataFrame) -> str:
         - Sempre que a instrução exigir múltiplas etapas lógicas (ex: filtrar dados, calcular agregados e depois comparar), DIVIDA a tarefa em subetapas.
         - Para cada etapa, GERE uma query separada, EXPLIQUE o objetivo dela em uma linha antes do SQL, e depois EXECUTE.
         - NÃO tente resolver tudo em uma única query se houver mais de 2 agregações ou comparações cruzadas.
-        - Resolva da seguinte maneira se necessário:
-            Passo 1: [descrição curta]
-            ```sql
-            QUERY 1
-            ```
-        
-            Passo 2: [descrição curta]
-            ```sql
-            QUERY 2
-            ```
         """
         "\n\n"
         f"**PERGUNTA DO USUÁRIO**:\n{user_query}"
@@ -264,30 +255,70 @@ def generate_graph_type_context(user_query: str, sql_query: str, df_columns: Lis
     Returns:
         Contexto formatado para a LLM
     """
-    # Criar uma descrição dos dados para ajudar a LLM a entender melhor a estrutura
+    # Criar uma descrição detalhada dos dados para ajudar a LLM a entender melhor a estrutura
     data_description = ""
     if not df_sample.empty:
-        # Verificar tipos de dados
-        numeric_cols = df_sample.select_dtypes(include=['number']).columns.tolist()
-        date_cols = [col for col in df_sample.columns if 'data' in col.lower() or df_sample[col].dtype == 'datetime64[ns]']
-        categorical_cols = df_sample.select_dtypes(include=['object']).columns.tolist()
+        # Verificar tipos de dados de forma mais robusta
+        numeric_cols = []
+        date_cols = []
+        categorical_cols = []
+
+        for col in df_sample.columns:
+            col_data = df_sample[col]
+
+            # Verifica se é numérico (incluindo strings que representam números)
+            try:
+                # Tenta converter para numérico, tratando vírgulas como separador decimal
+                if col_data.dtype == 'object':
+                    test_numeric = pd.to_numeric(col_data.astype(str).str.replace(',', '.'), errors='coerce')
+                    if test_numeric.notna().sum() > len(col_data) * 0.8:  # 80% são números válidos
+                        numeric_cols.append(col)
+                    else:
+                        categorical_cols.append(col)
+                elif pd.api.types.is_numeric_dtype(col_data):
+                    numeric_cols.append(col)
+                elif pd.api.types.is_datetime64_any_dtype(col_data) or 'data' in col.lower():
+                    date_cols.append(col)
+                else:
+                    categorical_cols.append(col)
+            except:
+                categorical_cols.append(col)
 
         # Adicionar informações sobre os primeiros valores de cada coluna
-        data_description = "\nAmostra dos dados:\n"
-        data_description += df_sample.head(3).to_string()
+        data_description = "\nAmostra dos dados (primeiras 3 linhas):\n"
+        data_description += df_sample.head(3).to_string(index=False)
 
-        # Adicionar informações sobre os tipos de dados
-        data_description += "\n\nTipos de colunas:"
+        # Adicionar análise detalhada dos tipos de dados
+        data_description += f"\n\nAnálise dos dados ({len(df_sample)} linhas total):"
+        data_description += f"\n- Total de colunas: {len(df_sample.columns)}"
+
         if numeric_cols:
-            data_description += f"\n- Colunas numéricas: {', '.join(numeric_cols)}"
+            data_description += f"\n- Colunas NUMÉRICAS ({len(numeric_cols)}): {', '.join(numeric_cols)}"
+            # Adiciona informação sobre valores numéricos
+            for col in numeric_cols[:2]:  # Máximo 2 colunas para não ficar muito longo
+                try:
+                    if df_sample[col].dtype == 'object':
+                        # Converte strings para números
+                        numeric_values = pd.to_numeric(df_sample[col].astype(str).str.replace(',', '.'), errors='coerce')
+                        min_val, max_val = numeric_values.min(), numeric_values.max()
+                    else:
+                        min_val, max_val = df_sample[col].min(), df_sample[col].max()
+                    data_description += f"\n  • {col}: valores de {min_val} a {max_val}"
+                except:
+                    pass
+
         if date_cols:
-            data_description += f"\n- Colunas de data/tempo: {', '.join(date_cols)}"
+            data_description += f"\n- Colunas de DATA/TEMPO ({len(date_cols)}): {', '.join(date_cols)}"
+
         if categorical_cols:
-            data_description += f"\n- Colunas categóricas: {', '.join(categorical_cols)}"
+            data_description += f"\n- Colunas CATEGÓRICAS ({len(categorical_cols)}): {', '.join(categorical_cols)}"
+            # Adiciona informação sobre categorias únicas
+            for col in categorical_cols[:2]:  # Máximo 2 colunas
+                unique_count = df_sample[col].nunique()
+                data_description += f"\n  • {col}: {unique_count} valores únicos"
 
     return (
         f"Você é um especialista em visualização de dados que escolhe o tipo de gráfico mais adequado para representar dados.\n\n"
-        f"Pergunta do usuário: {user_query}\n\n"
         f"Query SQL gerada:\n{sql_query}\n\n"
         f"Colunas retornadas pela query: {', '.join(df_columns)}\n"
         f"{data_description}\n\n"
@@ -302,8 +333,10 @@ def generate_graph_type_context(user_query: str, sql_query: str, df_columns: Lis
         "8. Pizza Simples → Ideal para mostrar proporções de um todo. Use quando tiver uma coluna categórica e uma coluna numérica, com poucas categorias (máximo 7).\n"
         "9. Dona → Similar ao gráfico de pizza, mas com um espaço no centro. Melhor para visualizar proporções quando há muitas categorias.\n"
         "10. Pizzas Múltiplas → Ideal para comparar proporções entre diferentes grupos. Use quando tiver duas colunas categóricas e uma coluna numérica.\n\n"
-        "Analise cuidadosamente a pergunta do usuário e os dados retornados. Escolha o tipo de gráfico que melhor representa a informação que o usuário está buscando.\n\n"
-        "Responda apenas com o número do tipo de gráfico mais adequado (1-10). Não inclua explicações ou texto adicional."
+        "Se o usuário solicitar um gráfico especifico na pergunta retorne o número do gráfico solicitado pelo usuário."
+        f"Pergunta do usuário: {user_query}\n\n"
+        "Analise os dados e escolha o tipo mais adequado baseado nas regras acima.\n\n"
+        "Responda APENAS com o número (1-10). SEM explicações."
     )
 
 def extract_sql_query_from_response(agent_response: str) -> Optional[str]:
@@ -399,22 +432,4 @@ def is_valid_sql_query(query: str) -> bool:
 
     return any(query_upper.startswith(cmd) for cmd in sql_commands)
 
-def get_graph_type_mapping() -> Dict[str, str]:
-    """
-    Retorna mapeamento de números para tipos de gráfico
-
-    Returns:
-        Dicionário com mapeamento número -> tipo
-    """
-    return {
-        "1": "line_simple",
-        "2": "multiline",
-        "3": "area",
-        "4": "bar_vertical",
-        "5": "bar_horizontal",
-        "6": "bar_grouped",
-        "7": "bar_stacked",
-        "8": "pie",
-        "9": "donut",
-        "10": "pie_multiple"
-    }
+# Função removida - mapeamento agora está diretamente no graph_selection_node.py

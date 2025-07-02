@@ -13,6 +13,12 @@ HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
+# Configurações do LangSmith (observabilidade)
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+LANGSMITH_TRACING = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
+LANGSMITH_ENDPOINT = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
+LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT", "agentgraph-project")
+
 # Configurações de arquivos e diretórios
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploaded_data")
 DEFAULT_CSV_PATH = os.getenv("DEFAULT_CSV_PATH", "tabela.csv")
@@ -97,6 +103,16 @@ if OPENAI_API_KEY:
 if ANTHROPIC_API_KEY:
     os.environ["ANTHROPIC_API_KEY"] = ANTHROPIC_API_KEY
 
+# Configuração das variáveis de ambiente para LangSmith
+if LANGSMITH_API_KEY:
+    os.environ["LANGSMITH_API_KEY"] = LANGSMITH_API_KEY
+    os.environ["LANGSMITH_TRACING"] = str(LANGSMITH_TRACING).lower()
+    os.environ["LANGSMITH_ENDPOINT"] = LANGSMITH_ENDPOINT
+    os.environ["LANGSMITH_PROJECT"] = LANGSMITH_PROJECT
+    logging.info(f"LangSmith configurado: projeto='{LANGSMITH_PROJECT}', tracing={LANGSMITH_TRACING}")
+else:
+    logging.info("LangSmith não configurado (LANGSMITH_API_KEY não encontrada)")
+
 def get_active_csv_path():
     """Retorna o CSV ativo: o carregado ou o padrão."""
     if os.path.exists(UPLOADED_CSV_PATH):
@@ -109,6 +125,7 @@ def get_active_csv_path():
 def validate_config():
     """Valida se as configurações necessárias estão presentes."""
     errors = []
+    warnings = []
 
     if not HUGGINGFACE_API_KEY:
         errors.append("HUGGINGFACE_API_KEY não configurada")
@@ -122,8 +139,42 @@ def validate_config():
     if not os.path.exists(DEFAULT_CSV_PATH):
         errors.append(f"Arquivo CSV padrão não encontrado: {DEFAULT_CSV_PATH}")
 
+    # LangSmith é opcional - apenas aviso se não configurado
+    if not LANGSMITH_API_KEY:
+        warnings.append("LANGSMITH_API_KEY não configurada - observabilidade desabilitada")
+
     if errors:
         raise ValueError(f"Erros de configuração: {', '.join(errors)}")
 
+    if warnings:
+        for warning in warnings:
+            logging.warning(warning)
+
     logging.info("Configurações validadas com sucesso")
     return True
+
+def is_langsmith_enabled() -> bool:
+    """
+    Verifica se o LangSmith está habilitado e configurado
+
+    Returns:
+        True se LangSmith estiver habilitado, False caso contrário
+    """
+    return bool(LANGSMITH_API_KEY and LANGSMITH_TRACING)
+
+def get_langsmith_metadata() -> dict:
+    """
+    Retorna metadados padrão para traces do LangSmith
+
+    Returns:
+        Dicionário com metadados do projeto
+    """
+    if not is_langsmith_enabled():
+        return {}
+
+    return {
+        "project": LANGSMITH_PROJECT,
+        "application": "AgentGraph",
+        "version": "1.0.0",
+        "environment": "production"
+    }
