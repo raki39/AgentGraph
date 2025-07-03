@@ -332,9 +332,9 @@ def create_interface():
 
                 # Status do LangSmith
                 if is_langsmith_enabled():
-                    gr.Markdown(f"🔍 **LangSmith**: ✅ Ativo\n📊 **Projeto**: `{LANGSMITH_PROJECT}`")
+                    gr.Markdown(f"🔍 **LangSmith**: Ativo")
                 else:
-                    gr.Markdown("🔍 **LangSmith**: ❌ Desabilitado")
+                    gr.Markdown("🔍 **LangSmith**: Desabilitado")
 
                 reset_btn = gr.Button("Resetar")
                 

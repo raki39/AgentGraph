@@ -147,12 +147,10 @@ def prepare_sql_context(user_query: str, db_sample: pd.DataFrame) -> str:
         - Responda SEMPRE em português brasileiro, independentemente do idioma da pergunta.
         - Mantenha suas respostas consistentes, claras e objetivas.
         - O nome da tabela é "tabela".
+        - Os dados são de logística de entregas de produtos.
         - Realize TODOS os cálculos aritméticos diretamente dentro da query SQL.
         - NÃO realize cálculos fora da query.
         - Use funções SQL como AVG, SUM, COUNT, MAX, MIN, CASE WHEN, etc., conforme necessário.
-        - Sempre que a instrução exigir múltiplas etapas lógicas (ex: filtrar dados, calcular agregados e depois comparar), DIVIDA a tarefa em subetapas.
-        - Para cada etapa, GERE uma query separada, EXPLIQUE o objetivo dela em uma linha antes do SQL, e depois EXECUTE.
-        - NÃO tente resolver tudo em uma única query se houver mais de 2 agregações ou comparações cruzadas.
         """
         "\n\n"
         f"**PERGUNTA DO USUÁRIO**:\n{user_query}"
@@ -179,8 +177,10 @@ async def refine_response_with_llm(
     prompt = (
         f"Pergunta do usuário:\n{user_question}\n\n"
         f"Resposta gerada pelo agente SQL:\n{sql_response}\n\n"
-        "Sua tarefa é refinar, complementar e melhorar a resposta.\n" 
-        "Sempre mantenha a resposta original, o refinamento vem posteriormente."
+        "Sua tarefa é refinar a resposta para deixá-la mais clara, completa e compreensível em português, "
+        "mantendo a resposta original no início do texto e adicionando insights úteis sobre logística de entregas de produtos, "
+        "por exemplo: comparar com padrões típicos, identificar possíveis problemas ou sugerir ações para melhorar atrasos, performance ou custos. "
+        "Evite repetir informações sem necessidade e não invente dados."
     )
 
     logging.info(f"[DEBUG] Prompt enviado ao modelo de refinamento:\n{prompt}\n")
@@ -313,30 +313,36 @@ def generate_graph_type_context(user_query: str, sql_query: str, df_columns: Lis
         if categorical_cols:
             data_description += f"\n- Colunas CATEGÓRICAS ({len(categorical_cols)}): {', '.join(categorical_cols)}"
             # Adiciona informação sobre categorias únicas
-            for col in categorical_cols[:2]:  # Máximo 2 colunas
+            for col in categorical_cols[:3]:  # Máximo 3 colunas
                 unique_count = df_sample[col].nunique()
                 data_description += f"\n  • {col}: {unique_count} valores únicos"
 
+            # Destaque especial para múltiplas categóricas importantes
+            if len(categorical_cols) >= 2 and len(numeric_cols) >= 1:
+                data_description += f"\n\n⚠️ ATENÇÃO: {len(categorical_cols)} colunas categóricas + {len(numeric_cols)} numérica(s) → CONSIDERE GRÁFICO AGRUPADO (6) para mostrar múltiplas dimensões!"
+
+    # Prompt ULTRA SIMPLIFICADO
     return (
-        f"Você é um especialista em visualização de dados que escolhe o tipo de gráfico mais adequado para representar dados.\n\n"
-        f"Query SQL gerada:\n{sql_query}\n\n"
-        f"Colunas retornadas pela query: {', '.join(df_columns)}\n"
-        f"{data_description}\n\n"
-        "Escolha o tipo de gráfico mais adequado para visualizar esses dados. Considere os seguintes tipos de gráficos e suas aplicações:\n\n"
-        "1. Linha Simples → Ideal para mostrar tendências ao longo do tempo ou sequências. Use quando tiver uma coluna de data/tempo/sequência e uma coluna numérica.\n"
-        "2. Multilinhas → Ideal para comparar tendências de diferentes categorias ao longo do tempo. Use quando tiver uma coluna de data/tempo e múltiplas colunas numéricas, ou quando tiver uma coluna categórica que pode ser usada para agrupar os dados.\n"
-        "3. Área → Similar ao gráfico de linha, mas com área preenchida abaixo da linha. Ideal para mostrar volume ao longo do tempo. Use quando tiver uma coluna de data/tempo e uma coluna numérica.\n"
-        "4. Barras Verticais → Ideal para comparar valores entre diferentes categorias. Use quando tiver uma coluna categórica e uma coluna numérica.\n"
-        "5. Barras Horizontais → Similar às barras verticais, mas melhor quando há muitas categorias ou nomes longos. Use quando tiver uma coluna categórica e uma coluna numérica.\n"
-        "6. Barras Agrupadas → Ideal para comparar valores de múltiplas categorias. Use quando tiver uma coluna categórica e múltiplas colunas numéricas para comparação.\n"
-        "7. Barras Empilhadas → Ideal para mostrar partes de um todo por categoria. Use quando tiver uma coluna categórica e múltiplas colunas numéricas que representam partes de um todo.\n"
-        "8. Pizza Simples → Ideal para mostrar proporções de um todo. Use quando tiver uma coluna categórica e uma coluna numérica, com poucas categorias (máximo 7).\n"
-        "9. Dona → Similar ao gráfico de pizza, mas com um espaço no centro. Melhor para visualizar proporções quando há muitas categorias.\n"
-        "10. Pizzas Múltiplas → Ideal para comparar proporções entre diferentes grupos. Use quando tiver duas colunas categóricas e uma coluna numérica.\n\n"
-        "Se o usuário solicitar um gráfico especifico na pergunta retorne o número do gráfico solicitado pelo usuário."
-        f"Pergunta do usuário: {user_query}\n\n"
-        "Analise os dados e escolha o tipo mais adequado baseado nas regras acima.\n\n"
-        "Responda APENAS com o número (1-10). SEM explicações."
+        f"Escolha o gráfico mais adequado e de acordo com pergunta do usuário e os dados:\n\n"
+        f"COLUNAS RETORNADAS: {', '.join(df_columns)}\n\n"
+        f"DADOS: {data_description}\n\n"
+        f"PERGUNTA: {user_query}\n\n"
+        f"OPÇÕES DE GRÁFICOS::\n"
+        f"1. Linha - evolução temporal\n"
+        f"2. Multilinhas - múltiplas tendências\n"
+        f"3. Área - volume temporal\n"
+        f"4. Barras Verticais - comparar categorias (nomes curtos)\n"
+        f"5. Barras Horizontais - comparar categorias (nomes longos)\n"
+        f"6. Barras Agrupadas - múltiplas métricas\n"
+        f"7. Barras Empilhadas - partes de um todo\n"
+        f"8. Pizza - proporções (poucas categorias)\n"
+        f"9. Dona - proporções (muitas categorias)\n"
+        f"10. Pizzas Múltiplas - proporções por grupos\n\n"
+        f"Responda apenas o número (1-10)."
+        "\n\nINSTRUÇÕES FINAIS:\n"
+        "1. PRIMEIRO: Verifique se o usuário especificou um tipo de gráfico na pergunta do usuário\n"
+        "2. SE SIM: Use o gráfico solicitado (consulte o mapeamento acima)\n"
+        "3. SE NÃO: Escolha o gráfico mais adequado\n\n"
     )
 
 def extract_sql_query_from_response(agent_response: str) -> Optional[str]:
@@ -431,5 +437,3 @@ def is_valid_sql_query(query: str) -> bool:
     query_upper = query.strip().upper()
 
     return any(query_upper.startswith(cmd) for cmd in sql_commands)
-
-# Função removida - mapeamento agora está diretamente no graph_selection_node.py

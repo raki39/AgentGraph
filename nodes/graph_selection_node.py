@@ -114,7 +114,7 @@ async def call_llm_for_graph_selection(graph_context: str, user_query: str) -> s
     try:
         # Criar LLM com configuração limpa
         llm = ChatOpenAI(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             temperature=0,
             max_tokens=5,
             timeout=30
