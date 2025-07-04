@@ -2,9 +2,12 @@
 Grafo principal do LangGraph para o AgentGraph
 """
 import logging
+import pandas as pd
+import re
 from typing import Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+from sqlalchemy import Integer, Float, DateTime
 
 from nodes.agent_node import AgentState, should_refine_response, should_generate_graph
 from nodes.csv_processing_node import csv_processing_node
@@ -106,22 +109,9 @@ class AgentGraphManager:
         # Lê CSV
         df = pd.read_csv(csv_path, sep=';')
 
-        # Processamento básico de tipos
+        # Processamento inteligente de tipos
         sql_types = {}
-        for col in df.columns:
-            if df[col].dtype == 'object':
-                # Tenta converter para datetime
-                try:
-                    pd.to_datetime(df[col], errors='raise')
-                    df[col] = pd.to_datetime(df[col])
-                    sql_types[col] = DateTime
-                except:
-                    # Mantém como texto
-                    pass
-            elif df[col].dtype in ['int64', 'int32']:
-                sql_types[col] = Integer
-            elif df[col].dtype in ['float64', 'float32']:
-                sql_types[col] = Float
+        df = self._smart_type_conversion(df, sql_types)
 
         # Cria engine e salva dados
         engine = create_engine(f"sqlite:///{SQL_DB_PATH}")
@@ -452,6 +442,299 @@ class AgentGraphManager:
         result = await self.custom_node_manager.execute_node("system_validation", state)
         return result.get("validation", {})
 
+    def _smart_type_conversion(self, df, sql_types):
+        """
+        Conversão inteligente de tipos de dados com suporte a formatos brasileiros
+        """
+        import re
+
+        logging.info("[TYPE_CONVERSION] 🔧 Iniciando conversão inteligente de tipos")
+
+        for col in df.columns:
+            col_data = df[col].dropna()  # Remove NaN para análise
+
+            if len(col_data) == 0:
+                continue
+
+            # Amostra para análise (primeiros 100 valores não-nulos)
+            sample = col_data.head(100).astype(str)
+
+            logging.debug(f"[TYPE_CONVERSION] 📊 Analisando coluna: {col}")
+
+            # 1. DETECTAR DATAS
+            if self._is_date_column(sample):
+                try:
+                    df[col] = self._convert_to_date(df[col])
+                    sql_types[col] = DateTime
+                    logging.debug(f"[TYPE_CONVERSION] ✅ {col} → DATETIME")
+                    continue
+                except Exception as e:
+                    logging.warning(f"[TYPE_CONVERSION] ⚠️ Falha ao converter {col} para data: {e}")
+
+            # 2. DETECTAR NÚMEROS INTEIROS (PRIORIDADE ALTA)
+            if self._is_integer_column(sample):
+                try:
+                    # Converter removendo caracteres não numéricos, mas mantendo negativos
+                    def clean_integer(value):
+                        if pd.isna(value):
+                            return None
+                        value_str = str(value).strip()
+                        # Manter apenas dígitos e sinal negativo
+                        clean_value = ''.join(c for c in value_str if c.isdigit() or c == '-')
+                        if clean_value and clean_value != '-':
+                            return int(clean_value)
+                        return None
+
+                    df[col] = df[col].apply(clean_integer).astype('Int64')
+                    sql_types[col] = Integer
+                    logging.debug(f"[TYPE_CONVERSION] ✅ {col} → INTEGER")
+                    continue
+                except Exception as e:
+                    logging.warning(f"[TYPE_CONVERSION] ⚠️ Falha ao converter {col} para inteiro: {e}")
+
+            # 3. DETECTAR VALORES MONETÁRIOS
+            if self._is_monetary_column(sample):
+                try:
+                    df[col] = self._convert_to_monetary(df[col])
+                    sql_types[col] = Float
+                    logging.debug(f"[TYPE_CONVERSION] ✅ {col} → FLOAT (monetário)")
+                    continue
+                except Exception as e:
+                    logging.warning(f"[TYPE_CONVERSION] ⚠️ Falha ao converter {col} para monetário: {e}")
+
+            # 4. DETECTAR NÚMEROS DECIMAIS
+            if self._is_float_column(sample):
+                try:
+                    df[col] = self._convert_to_float(df[col])
+                    sql_types[col] = Float
+                    logging.debug(f"[TYPE_CONVERSION] ✅ {col} → FLOAT")
+                    continue
+                except Exception as e:
+                    logging.warning(f"[TYPE_CONVERSION] ⚠️ Falha ao converter {col} para float: {e}")
+
+            # 5. MANTER COMO TEXTO (padrão)
+            logging.debug(f"[TYPE_CONVERSION] 📝 {col} → TEXT (padrão)")
+
+        # Resumo da conversão
+        type_summary = {}
+        for col, sql_type in sql_types.items():
+            type_name = sql_type.__name__ if hasattr(sql_type, '__name__') else str(sql_type).split('.')[-1].replace('>', '')
+            if type_name not in type_summary:
+                type_summary[type_name] = 0
+            type_summary[type_name] += 1
+
+        summary_text = ", ".join([f"{count} {type_name}" for type_name, count in type_summary.items()])
+        logging.info(f"[TYPE_CONVERSION] ✅ Conversão concluída: {summary_text}")
+        return df
+
+    def _is_date_column(self, sample):
+        """Detecta se uma coluna contém datas BASEADO APENAS NOS VALORES"""
+        import re
+
+        # Padrões de data brasileiros e internacionais
+        date_patterns = [
+            r'^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}$',  # DD/MM/YYYY ou DD-MM-YYYY
+            r'^\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}$',  # YYYY/MM/DD ou YYYY-MM-DD
+            r'^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2}$',  # DD/MM/YY
+        ]
+
+        # Verificar se pelo menos 70% dos valores seguem padrão de data
+        date_count = 0
+        for value in sample:
+            if pd.isna(value) or value == '':
+                continue
+            for pattern in date_patterns:
+                if re.match(pattern, str(value).strip()):
+                    date_count += 1
+                    break
+
+        return date_count / len(sample) >= 0.7
+
+    def _is_monetary_column(self, sample):
+        """Detecta se uma coluna contém valores monetários BASEADO APENAS NOS VALORES"""
+        import re
+
+        # Padrões monetários brasileiros e internacionais
+        money_patterns = [
+            r'^R\$\s*\d+[,\.]\d{2}$',  # R$ 10,50 ou R$ 10.50
+            r'^\d+[,\.]\d{2}$',        # 10,50 ou 10.50
+            r'^R\$\s*\d+$',            # R$ 10
+            r'^\$\s*\d+[,\.]\d{2}$',   # $ 10.50
+            r'^\$\s*\d+$',             # $ 10
+        ]
+
+        # Verificar se pelo menos 60% dos valores seguem padrão monetário
+        money_count = 0
+        for value in sample:
+            if pd.isna(value) or value == '':
+                continue
+            value_str = str(value).strip()
+            for pattern in money_patterns:
+                if re.match(pattern, value_str):
+                    money_count += 1
+                    break
+
+        return money_count / len(sample) >= 0.6
+
+    def _is_integer_column(self, sample):
+        """Detecta se uma coluna contém números inteiros"""
+        try:
+            # Primeiro, verificar se há vírgulas ou pontos decimais nos valores
+            has_decimal_separators = False
+            valid_numeric_count = 0
+            integer_count = 0
+
+            for value in sample:
+                if pd.isna(value) or value == '':
+                    continue
+
+                value_str = str(value).strip()
+
+                # Se contém vírgula ou ponto seguido de dígitos, é decimal
+                if (',' in value_str and any(c.isdigit() for c in value_str.split(',')[-1])) or \
+                   ('.' in value_str and any(c.isdigit() for c in value_str.split('.')[-1])):
+                    has_decimal_separators = True
+                    break
+
+                # Tentar converter para número
+                try:
+                    # Remover espaços e caracteres não numéricos (exceto - para negativos)
+                    clean_value = ''.join(c for c in value_str if c.isdigit() or c == '-')
+                    if clean_value and clean_value != '-':
+                        num_value = int(clean_value)
+                        valid_numeric_count += 1
+                        integer_count += 1
+                except:
+                    # Se não conseguir converter para int, tentar float
+                    try:
+                        float_value = float(value_str)
+                        valid_numeric_count += 1
+                        # Se o float é igual ao int, conta como inteiro
+                        if float_value == int(float_value):
+                            integer_count += 1
+                    except:
+                        continue
+
+            # Se encontrou separadores decimais, não é coluna de inteiros
+            if has_decimal_separators:
+                return False
+
+            # Verificar se pelo menos 80% são números válidos
+            if valid_numeric_count == 0 or valid_numeric_count / len(sample) < 0.8:
+                return False
+
+            # Verificar se pelo menos 95% dos números válidos são inteiros
+            return integer_count / valid_numeric_count >= 0.95
+
+        except Exception as e:
+            logging.debug(f"Erro na detecção de inteiros: {e}")
+            return False
+
+    def _is_float_column(self, sample):
+        """Detecta se uma coluna contém números decimais (com vírgula ou ponto)"""
+        try:
+            has_decimal_values = False
+            valid_numeric_count = 0
+
+            for value in sample:
+                if pd.isna(value) or value == '':
+                    continue
+
+                value_str = str(value).strip()
+
+                # Verificar se contém separadores decimais com dígitos após
+                if (',' in value_str and any(c.isdigit() for c in value_str.split(',')[-1])) or \
+                   ('.' in value_str and any(c.isdigit() for c in value_str.split('.')[-1])):
+                    has_decimal_values = True
+
+                # Tentar converter para numérico (substituindo vírgula por ponto)
+                try:
+                    clean_value = value_str.replace(',', '.')
+                    float(clean_value)
+                    valid_numeric_count += 1
+                except:
+                    continue
+
+            # Só é float se tem separadores decimais E pelo menos 80% são números válidos
+            if not has_decimal_values:
+                return False
+
+            return valid_numeric_count / len(sample) >= 0.8
+
+        except Exception as e:
+            logging.debug(f"Erro na detecção de floats: {e}")
+            return False
+
+    def _convert_to_date(self, series):
+        """Converte série para datetime com formatos brasileiros"""
+        # Tentar diferentes formatos de data
+        date_formats = [
+            '%d/%m/%Y',    # 31/12/2023
+            '%d-%m-%Y',    # 31-12-2023
+            '%d.%m.%Y',    # 31.12.2023
+            '%Y-%m-%d',    # 2023-12-31
+            '%Y/%m/%d',    # 2023/12/31
+            '%d/%m/%y',    # 31/12/23
+        ]
+
+        for fmt in date_formats:
+            try:
+                return pd.to_datetime(series, format=fmt, errors='raise')
+            except:
+                continue
+
+        # Se nenhum formato específico funcionou, usar inferência automática
+        try:
+            return pd.to_datetime(series, dayfirst=True, errors='coerce')
+        except:
+            raise ValueError("Não foi possível converter para data")
+
+    def _convert_to_monetary(self, series):
+        """Converte série para valores monetários (float)"""
+        def clean_monetary(value):
+            if pd.isna(value):
+                return None
+
+            # Converter para string e limpar
+            value_str = str(value).strip()
+
+            # Remover símbolos monetários
+            value_str = value_str.replace('R$', '').replace('$', '').strip()
+
+            # Tratar formato brasileiro (vírgula como decimal)
+            if ',' in value_str and '.' in value_str:
+                # Formato: 1.234,56 → 1234.56
+                value_str = value_str.replace('.', '').replace(',', '.')
+            elif ',' in value_str:
+                # Formato: 1234,56 → 1234.56
+                value_str = value_str.replace(',', '.')
+
+            try:
+                return float(value_str)
+            except:
+                return None
+
+        return series.apply(clean_monetary)
+
+    def _convert_to_float(self, series):
+        """Converte série para float com formato brasileiro"""
+        def clean_float(value):
+            if pd.isna(value):
+                return None
+
+            value_str = str(value).strip()
+
+            # Tratar formato brasileiro
+            if ',' in value_str:
+                value_str = value_str.replace(',', '.')
+
+            try:
+                return float(value_str)
+            except:
+                return None
+
+        return series.apply(clean_float)
+
 # Instância global do gerenciador
 _graph_manager: Optional[AgentGraphManager] = None
 
@@ -488,3 +771,5 @@ async def initialize_graph() -> AgentGraphManager:
     except Exception as e:
         logging.error(f"Erro ao inicializar grafo: {e}")
         raise
+
+# Classe GraphManager removida - funcionalidade movida para AgentGraphManager

@@ -339,7 +339,7 @@ def create_interface():
                 reset_btn = gr.Button("Resetar")
                 
             with gr.Column(scale=4):
-                gr.Markdown("## Reasoning Agent")
+                gr.Markdown("## Agent86")
                 chatbot = gr.Chatbot(
                     height=600,
                     show_label=False,
