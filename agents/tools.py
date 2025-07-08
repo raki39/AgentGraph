@@ -139,9 +139,6 @@ def prepare_sql_context(user_query: str, db_sample: pd.DataFrame) -> str:
     context = (
         f"""
         Você é um assistente especializado em consultas SQL e análise de dados.
-
-        REGRAS OBRIGATORIAS:
-        - “Retorne os resultados da consulta em formato legível, sem incluir o texto da query SQL.”
         
         IMPORTANTE:
         - Responda SEMPRE em português brasileiro, independentemente do idioma da pergunta.
@@ -150,9 +147,28 @@ def prepare_sql_context(user_query: str, db_sample: pd.DataFrame) -> str:
         - Realize TODOS os cálculos aritméticos diretamente dentro da query SQL.
         - NÃO realize cálculos fora da query.
         - Use funções SQL como AVG, SUM, COUNT, MAX, MIN, CASE WHEN, etc., conforme necessário.
+        - Sempre que a instrução exigir múltiplas etapas lógicas (ex: filtrar dados, calcular agregados e depois comparar), DIVIDA a tarefa em subetapas.
+        - Para cada etapa, GERE uma query separada, EXPLIQUE o objetivo dela em uma linha antes do SQL, e depois EXECUTE.
+        - NÃO tente resolver tudo em uma única query se houver mais de 2 agregações ou comparações cruzadas.
+
+        - Siga esse formato de passos a seguir internamente somente para o seu racíocinio:
+
+            Passo 1: [descrição curta]
+            ```sql
+            QUERY 1
+            ```
+        
+            Passo 2: [descrição curta]
+            ```sql
+            QUERY 2
+            ```
+
+        SUPER IMPORTANTE:
+        - Sempre inclua o resultado da querySQL na resposta final, nunca inclua a querySQL em sí ou os passos seguidos para chegar ao resultado.
+        
         """
         "\n\n"
-        f"**PERGUNTA DO USUÁRIO**:\n{user_query}"
+        f"Pergunta do usuário: \n{user_query}"
     )
 
     return context
