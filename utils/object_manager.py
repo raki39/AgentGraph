@@ -13,6 +13,7 @@ class ObjectManager:
     def __init__(self):
         self._objects: Dict[str, Any] = {}
         self._sql_agents: Dict[str, Any] = {}
+        self._processing_agents: Dict[str, Any] = {}
         self._engines: Dict[str, Any] = {}
         self._databases: Dict[str, Any] = {}
         self._cache_managers: Dict[str, Any] = {}
@@ -34,6 +35,17 @@ class ObjectManager:
     def get_sql_agent(self, agent_id: str) -> Optional[Any]:
         """Recupera agente SQL pelo ID"""
         return self._sql_agents.get(agent_id)
+
+    def store_processing_agent(self, agent: Any) -> str:
+        """Armazena Processing Agent e retorna ID"""
+        agent_id = str(uuid.uuid4())
+        self._processing_agents[agent_id] = agent
+        logging.info(f"Processing Agent armazenado com ID: {agent_id}")
+        return agent_id
+
+    def get_processing_agent(self, agent_id: str) -> Optional[Any]:
+        """Recupera Processing Agent pelo ID"""
+        return self._processing_agents.get(agent_id)
     
     def store_engine(self, engine: Any) -> str:
         """Armazena engine e retorna ID"""

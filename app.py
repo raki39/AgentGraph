@@ -12,6 +12,7 @@ from PIL import Image
 from graphs.main_graph import initialize_graph, get_graph_manager
 from utils.config import (
     AVAILABLE_MODELS,
+    REFINEMENT_MODELS,
     DEFAULT_MODEL,
     GRADIO_SHARE,
     GRADIO_PORT,
@@ -66,7 +67,7 @@ def run_async(coro):
     
     return loop.run_until_complete(coro)
 
-def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool = False) -> Tuple[str, Optional[str]]:
+def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool = False, processing_enabled: bool = False, processing_model: str = "GPT-4o-mini") -> Tuple[str, Optional[str]]:
     """
     Processa resposta do chatbot usando LangGraph
 
@@ -74,6 +75,8 @@ def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool =
         user_input: Entrada do usuário
         selected_model: Modelo LLM selecionado
         advanced_mode: Se deve usar refinamento avançado
+        processing_enabled: Se o Processing Agent está habilitado
+        processing_model: Modelo para o Processing Agent
 
     Returns:
         Tupla com (resposta_texto, caminho_imagem_grafico)
@@ -88,7 +91,9 @@ def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool =
         result = run_async(graph_manager.process_query(
             user_input=user_input,
             selected_model=selected_model,
-            advanced_mode=advanced_mode
+            advanced_mode=advanced_mode,
+            processing_enabled=processing_enabled,
+            processing_model=processing_model
         ))
 
         response_text = result.get("response", "Erro ao processar resposta")
@@ -261,7 +266,7 @@ def toggle_history():
     else:
         return {}
 
-def respond(message: str, chat_history: List[Dict[str, str]], selected_model: str, advanced_mode: bool):
+def respond(message: str, chat_history: List[Dict[str, str]], selected_model: str, advanced_mode: bool, processing_enabled: bool = False, processing_model: str = "GPT-4o-mini"):
     """
     Função de resposta para o chatbot Gradio
 
@@ -270,15 +275,26 @@ def respond(message: str, chat_history: List[Dict[str, str]], selected_model: st
         chat_history: Histórico do chat (formato messages)
         selected_model: Modelo selecionado
         advanced_mode: Modo avançado habilitado
+        processing_enabled: Se o Processing Agent está habilitado
+        processing_model: Modelo para o Processing Agent
 
     Returns:
         Tupla com (mensagem_vazia, histórico_atualizado, imagem_grafico)
     """
+    import logging
+
+    logging.info(f"[GRADIO RESPOND] ===== NOVA REQUISIÇÃO =====")
+    logging.info(f"[GRADIO RESPOND] Message: {message}")
+    logging.info(f"[GRADIO RESPOND] Selected model: {selected_model}")
+    logging.info(f"[GRADIO RESPOND] Advanced mode: {advanced_mode}")
+    logging.info(f"[GRADIO RESPOND] Processing enabled: {processing_enabled}")
+    logging.info(f"[GRADIO RESPOND] Processing model: {processing_model}")
+
     if not message.strip():
         return "", chat_history, None
 
     # Processa resposta
-    response, graph_image_path = chatbot_response(message, selected_model, advanced_mode)
+    response, graph_image_path = chatbot_response(message, selected_model, advanced_mode, processing_enabled, processing_model)
 
     # Atualiza histórico no formato messages
     chat_history.append({"role": "user", "content": message})
@@ -330,6 +346,15 @@ def create_interface():
                 upload_feedback = gr.Markdown()
                 advanced_checkbox = gr.Checkbox(label="Refinar Resposta")
 
+                # Controles do Processing Agent
+                processing_checkbox = gr.Checkbox(label="Usar Processing Agent", value=False)
+                processing_model_selector = gr.Dropdown(
+                    choices=list(AVAILABLE_MODELS.keys()) + list(REFINEMENT_MODELS.keys()),
+                    value="GPT-4o-mini",  # Chave correta do AVAILABLE_MODELS
+                    label="Modelo do Processing Agent",
+                    visible=False
+                )
+
                 # Status do LangSmith
                 if is_langsmith_enabled():
                     gr.Markdown(f"🔍 **LangSmith**: Ativo")
@@ -366,9 +391,9 @@ def create_interface():
                 download_file = gr.File(visible=False)
         
         # Event handlers (usando as funções originais do sistema)
-        def handle_response_with_graph(message, chat_history, model, advanced):
+        def handle_response_with_graph(message, chat_history, model, advanced, processing_enabled, processing_model):
             """Wrapper para lidar com resposta e gráfico"""
-            empty_msg, updated_history, graph_path = respond(message, chat_history, model, advanced)
+            empty_msg, updated_history, graph_path = respond(message, chat_history, model, advanced, processing_enabled, processing_model)
 
             # Controla visibilidade do componente de gráfico
             if graph_path:
@@ -376,15 +401,19 @@ def create_interface():
             else:
                 return empty_msg, updated_history, gr.update(visible=False)
 
+        def toggle_processing_agent(enabled):
+            """Controla visibilidade do seletor de modelo do Processing Agent"""
+            return gr.update(visible=enabled)
+
         msg.submit(
             handle_response_with_graph,
-            inputs=[msg, chatbot, model_selector, advanced_checkbox],
+            inputs=[msg, chatbot, model_selector, advanced_checkbox, processing_checkbox, processing_model_selector],
             outputs=[msg, chatbot, graph_image]
         )
 
         btn.click(
             handle_response_with_graph,
-            inputs=[msg, chatbot, model_selector, advanced_checkbox],
+            inputs=[msg, chatbot, model_selector, advanced_checkbox, processing_checkbox, processing_model_selector],
             outputs=[msg, chatbot, graph_image]
         )
 
@@ -408,6 +437,12 @@ def create_interface():
         history_btn.click(
             toggle_history,
             outputs=history_output
+        )
+
+        processing_checkbox.change(
+            toggle_processing_agent,
+            inputs=processing_checkbox,
+            outputs=processing_model_selector
         )
     
     return demo

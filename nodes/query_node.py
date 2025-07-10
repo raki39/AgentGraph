@@ -82,12 +82,18 @@ async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
         state["query_type"] = query_type
 
         if query_type in ['sql_query', 'sql_query_graphic']:
+            # Obtém sugestão de query e observações do Processing Agent (se disponível)
+            suggested_query = state.get("suggested_query", "")
+            query_observations = state.get("query_observations", "")
+
             # Prepara contexto para envio direto ao agentSQL
-            sql_context = prepare_sql_context(user_input, db_sample)
+            sql_context = prepare_sql_context(user_input, db_sample, suggested_query, query_observations)
             state["sql_context"] = sql_context
 
             logging.info(f"[DEBUG] Tipo de query detectado: {query_type}")
-            logging.info(f"[DEBUG] Contexto preparado para agentSQL:\n{sql_context}\n")
+            if suggested_query:
+                logging.info(f"[DEBUG] Query sugerida pelo Processing Agent incluída no contexto")
+            logging.info(f"[DEBUG] Contexto preparado para agentSQL")
         else:
             # Para tipos futuros (prediction)
             error_msg = f"Tipo de query '{query_type}' ainda não implementado."
@@ -109,7 +115,16 @@ async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
         
         # Executa query no agente SQL com contexto direto
         sql_result = await sql_agent.execute_query(state["sql_context"])
-        
+
+        # Log da resposta do agente SQL
+        logging.info(f"[AGENT SQL] ===== RESPOSTA DO AGENTE SQL =====")
+        logging.info(f"[AGENT SQL] Sucesso: {sql_result['success']}")
+        logging.info(f"[AGENT SQL] Resposta completa:")
+        logging.info(f"{sql_result.get('output', 'Sem resposta')}")
+        if sql_result.get("sql_query"):
+            logging.info(f"[AGENT SQL] Query SQL capturada: {sql_result['sql_query']}")
+        logging.info(f"[AGENT SQL] ===== FIM DA RESPOSTA =====")
+
         if not sql_result["success"]:
             state.update({
                 "error": sql_result["output"],

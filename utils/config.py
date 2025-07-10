@@ -58,8 +58,8 @@ MAX_TOKENS_MAP = {
 # Modelos que usam OpenAI (GPT)
 OPENAI_MODELS = {
     "o3-mini",
-    "gpt-4o-mini"
-    "gpt-4o",   
+    "gpt-4o-mini",
+    "gpt-4o",
 }
 
 # Modelos que usam Anthropic (Claude)

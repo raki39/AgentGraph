@@ -47,27 +47,7 @@ if ANTHROPIC_API_KEY:
         temperature=0
     )
 
-def generate_initial_context(db_sample: pd.DataFrame) -> str:
-    """
-    Gera contexto inicial para o modelo LLM
-
-    Args:
-        db_sample: Amostra dos dados do banco
-
-    Returns:
-        String com o contexto formatado
-    """
-    return (
-        f"Você é um assistente especializado em gerar queries SQL precisas e otimizadas. Analise cuidadosamente a estrutura da tabela e a pergunta do usuário.\n\n"
-
-        "**REGRAS ESSENCIAIS**:\n"
-        "2. Para buscar texto parcial use LIKE '%termo%'.\n"
-        "3. Para NULL use IS NULL ou IS NOT NULL (nunca = NULL).\n"
-        "4. Em agregações (SUM, COUNT, AVG) use GROUP BY nas colunas não agregadas.\n"
-        "5. Para datas use formato 'YYYY-MM-DD' ou funções date() do SQLite.\n"
-        "6. Nomes de colunas devem ser EXATAMENTE como mostrado.\n"
-        "- Detecte o idioma da pergunta e responda no mesmo idioma\n"
-    )
+# Função generate_initial_context removida - era redundante
 
 def is_greeting(user_query: str) -> bool:
     """
@@ -122,54 +102,129 @@ def detect_query_type(user_query: str) -> str:
     else:
         return 'sql_query'  # SQL normal
 
-def prepare_sql_context(user_query: str, db_sample: pd.DataFrame) -> str:
+def prepare_processing_context(user_query: str, db_sample: pd.DataFrame) -> str:
     """
-    Prepara o contexto inicial para ser enviado diretamente ao agentSQL
+    Prepara o contexto inicial para o Processing Agent
 
     Args:
         user_query: Pergunta do usuário
         db_sample: Amostra dos dados do banco
 
     Returns:
+        Contexto formatado para o Processing Agent
+    """
+    # Obtém informações detalhadas das colunas
+    column_info = []
+    for col in db_sample.columns:
+        col_data = db_sample[col].dropna()
+        if len(col_data) > 0:
+            # Exemplos de valores únicos (máximo 5)
+            unique_values = col_data.unique()[:5]
+            examples = ", ".join([str(v) for v in unique_values])
+
+            # Tipo de dados
+            dtype = str(col_data.dtype)
+
+            # Estatísticas básicas para colunas numéricas
+            stats = ""
+            if col_data.dtype in ['int64', 'float64']:
+                try:
+                    min_val = col_data.min()
+                    max_val = col_data.max()
+                    stats = f" | Min: {min_val}, Max: {max_val}"
+                except:
+                    pass
+
+            column_info.append(f"- {col} ({dtype}): {examples}{stats}")
+
+    columns_description = "\n".join(column_info)
+
+    # Adiciona algumas linhas de exemplo dos dados
+    sample_rows = []
+    num_rows_to_show = min(3, len(db_sample))
+    for i in range(num_rows_to_show):
+        row_data = []
+        for col in db_sample.columns:
+            value = db_sample.iloc[i][col]
+            # Trunca valores muito longos
+            str_value = str(value)
+            if len(str_value) > 30:
+                str_value = str_value[:27] + "..."
+            row_data.append(f"{col}: {str_value}")
+        sample_rows.append("  " + " | ".join(row_data))
+
+    sample_data = "\n".join(sample_rows) if sample_rows else "Nenhuma linha de exemplo disponível"
+
+    context = f"""
+    Você é um especialista em SQL que deve analisar a pergunta do usuário e gerar uma query SQL otimizada.
+
+    INSTRUÇÕES IMPORTANTES:
+    1. Analise a pergunta do usuário e o contexto dos dados
+    2. Gere uma query SQL precisa e otimizada
+    3. Use apenas as colunas que existem na tabela "tabela"
+    4. Para cálculos complexos, use CTEs quando necessário
+    5. Inclua LIMIT quando apropriado para evitar resultados excessivos
+    6. Considere os tipos de dados e valores de exemplo
+
+    CONTEXTO DOS DADOS:
+    Nome da tabela: tabela
+
+    Colunas disponíveis com tipos e exemplos:
+    {columns_description}
+
+    Exemplos de linhas dos dados:
+    {sample_data}
+
+    PERGUNTA DO USUÁRIO:
+    {user_query}
+
+    Responda somente nesse formato:
+
+    Opção de querySQL: [QuerySQL]
+    Observações: [Observações]
+    """
+
+    return context.strip()
+
+def prepare_sql_context(user_query: str, db_sample: pd.DataFrame, suggested_query: str = "", query_observations: str = "") -> str:
+    """
+    Prepara o contexto inicial para ser enviado diretamente ao agentSQL
+
+    Args:
+        user_query: Pergunta do usuário
+        db_sample: Amostra dos dados do banco
+        suggested_query: Query SQL sugerida pelo Processing Agent (opcional)
+        query_observations: Observações sobre a query sugerida (opcional)
+
+    Returns:
         Contexto formatado para o agentSQL
     """
-    # Usa o contexto base do generate_initial_context
-    base_context = generate_initial_context(db_sample)
+    import logging
 
-    context = (
-        f"""
-        Você é um assistente especializado em consultas SQL e análise de dados.
-        
-        IMPORTANTE:
-        - Responda SEMPRE em português brasileiro, independentemente do idioma da pergunta.
-        - Mantenha suas respostas consistentes, claras e objetivas.
-        - O nome da tabela é "tabela".
-        - Realize TODOS os cálculos aritméticos diretamente dentro da query SQL.
-        - NÃO realize cálculos fora da query.
-        - Use funções SQL como AVG, SUM, COUNT, MAX, MIN, CASE WHEN, etc., conforme necessário.
-        - Sempre que a instrução exigir múltiplas etapas lógicas (ex: filtrar dados, calcular agregados e depois comparar), DIVIDA a tarefa em subetapas.
-        - Para cada etapa, GERE uma query separada, EXPLIQUE o objetivo dela em uma linha antes do SQL, e depois EXECUTE.
-        - NÃO tente resolver tudo em uma única query se houver mais de 2 agregações ou comparações cruzadas.
-
-        - Siga esse formato de passos a seguir internamente somente para o seu racíocinio:
-
-            Passo 1: [descrição curta]
-            ```sql
-            QUERY 1
-            ```
-        
-            Passo 2: [descrição curta]
-            ```sql
-            QUERY 2
-            ```
-
-        SUPER IMPORTANTE:
-        - Sempre inclua o resultado da querySQL na resposta final, nunca inclua a querySQL em sí ou os passos seguidos para chegar ao resultado.
-        
-        """
-        "\n\n"
-        f"Pergunta do usuário: \n{user_query}"
+    # Contexto base
+    contexto_base = (
+        "Você é um assistente especializado em consultas SQL, geração de querySQL e análise de dados.\n"
+        "Sua tarefa é responder à pergunta do usuário abaixo, gerando uma query SQL que retorne os dados necessários para responder a pergunta.\n\n"
     )
+
+    # Contexto com opção de query (se disponível)
+    contexto_opcao_query = ""
+    if suggested_query and suggested_query.strip():
+        logging.info(f"[SQL CONTEXT] 🎯 Incluindo query sugerida no contexto do SQL Agent")
+
+        # Mantém formatação original da query
+        contexto_opcao_query = f"Opção de querySQL:\n```sql\n{suggested_query}\n```\n\n"
+
+        if query_observations and query_observations.strip():
+            contexto_opcao_query += f"Observações:\n{query_observations}\n\n"
+
+        contexto_opcao_query += "Você pode usar esta opção de query se ela estiver correta, ou criar sua própria query.\n\n"
+        logging.info(f"[SQL CONTEXT] ✅ Contexto do SQL Agent preparado COM sugestão de query")
+    else:
+        logging.info(f"[SQL CONTEXT] ℹ️ Contexto do SQL Agent preparado SEM sugestão de query")
+
+    # Monta contexto final
+    context = contexto_base + contexto_opcao_query + f"Pergunta do usuário: \n{user_query}"
 
     return context
 

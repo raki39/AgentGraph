@@ -9,7 +9,13 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy import Integer, Float, DateTime
 
-from nodes.agent_node import AgentState, should_refine_response, should_generate_graph
+from nodes.agent_node import (
+    AgentState,
+    should_refine_response,
+    should_generate_graph,
+    should_use_processing_agent,
+    route_after_cache_check
+)
 from nodes.csv_processing_node import csv_processing_node
 from nodes.database_node import (
     create_database_from_dataframe_node,
@@ -24,6 +30,10 @@ from nodes.query_node import (
 from nodes.refinement_node import (
     refine_response_node,
     format_final_response_node
+)
+from nodes.processing_node import (
+    process_initial_context_node,
+    validate_processing_input_node
 )
 from nodes.cache_node import (
     check_cache_node,
@@ -129,6 +139,8 @@ class AgentGraphManager:
             # Adiciona nós de validação e preparação
             workflow.add_node("validate_input", validate_query_input_node)
             workflow.add_node("check_cache", check_cache_node)
+            workflow.add_node("validate_processing", validate_processing_input_node)
+            workflow.add_node("process_initial_context", process_initial_context_node)
             workflow.add_node("prepare_context", prepare_query_context_node)
             workflow.add_node("get_db_sample", get_database_sample_node)
 
@@ -153,11 +165,20 @@ class AgentGraphManager:
             # Fluxo principal
             workflow.add_edge("validate_input", "check_cache")
 
-            # Condicional para cache hit
+            # Condicional para cache hit ou processing
             workflow.add_conditional_edges(
                 "check_cache",
-                lambda state: "update_history" if state.get("cache_hit") else "prepare_context"
+                route_after_cache_check,
+                {
+                    "update_history": "update_history",
+                    "validate_processing": "validate_processing",
+                    "prepare_context": "prepare_context"
+                }
             )
+
+            # Fluxo do Processing Agent
+            workflow.add_edge("validate_processing", "process_initial_context")
+            workflow.add_edge("process_initial_context", "prepare_context")
 
             workflow.add_edge("prepare_context", "get_db_sample")
             workflow.add_edge("get_db_sample", "process_query")
@@ -206,17 +227,21 @@ class AgentGraphManager:
         user_input: str,
         selected_model: str = "GPT-4o-mini",
         advanced_mode: bool = False,
+        processing_enabled: bool = False,
+        processing_model: str = "GPT-4o-mini",
         thread_id: str = "default"
     ) -> Dict[str, Any]:
         """
         Processa uma query do usuário através do grafo
-        
+
         Args:
             user_input: Entrada do usuário
             selected_model: Modelo LLM selecionado
             advanced_mode: Se deve usar refinamento avançado
+            processing_enabled: Se deve usar o Processing Agent
+            processing_model: Modelo para o Processing Agent
             thread_id: ID da thread para checkpoint
-            
+
         Returns:
             Resultado do processamento
         """
@@ -238,6 +263,14 @@ class AgentGraphManager:
                         logging.error("Banco de dados não encontrado para recriar agente")
                 else:
                     logging.error("ID do banco de dados não encontrado para o agente")
+
+            # Log dos parâmetros recebidos
+            logging.info(f"[MAIN GRAPH] ===== INICIANDO PROCESSAMENTO DE QUERY =====")
+            logging.info(f"[MAIN GRAPH] User input: {user_input}")
+            logging.info(f"[MAIN GRAPH] Selected model: {selected_model}")
+            logging.info(f"[MAIN GRAPH] Advanced mode: {advanced_mode}")
+            logging.info(f"[MAIN GRAPH] Processing enabled: {processing_enabled}")
+            logging.info(f"[MAIN GRAPH] Processing model: {processing_model}")
 
             # Prepara estado inicial com IDs serializáveis
             initial_state = {
@@ -261,7 +294,26 @@ class AgentGraphManager:
                 "graph_data": None,
                 "graph_image_id": None,
                 "graph_generated": False,
-                "graph_error": None
+                "graph_error": None,
+                # Campos relacionados ao cache
+                "cache_hit": False,
+                # Campos relacionados ao Processing Agent
+                "processing_enabled": processing_enabled,
+                "processing_model": processing_model,
+                "processing_agent_id": None,
+                "suggested_query": None,
+                "query_observations": None,
+                "processing_result": None,
+                "processing_success": False,
+                "processing_error": None,
+                # Campos relacionados ao refinamento
+                "refined": False,
+                "refinement_error": None,
+                "refinement_quality": None,
+                "quality_metrics": None,
+                # Campos relacionados ao contexto SQL
+                "sql_context": None,
+                "sql_result": None
             }
             
             # Executa o grafo
