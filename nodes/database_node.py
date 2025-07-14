@@ -202,8 +202,20 @@ async def get_database_sample_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if not engine:
             raise ValueError("Engine não encontrada")
         
+        # Determina qual tabela usar para amostra
+        connection_type = state.get("connection_type", "csv")
+
+        if connection_type == "postgresql":
+            # Para PostgreSQL, sempre usa uma tabela com dados para amostra
+            # Independente do modo, a amostra é só para contexto
+            table_name = "users"  # Tabela que sabemos que tem dados
+            logging.info(f"[DATABASE] PostgreSQL - usando tabela 'users' para amostra")
+        else:
+            table_name = "tabela"  # Padrão para CSV
+            logging.info(f"[DATABASE] CSV - usando tabela padrão: {table_name}")
+
         # Obtém amostra dos dados
-        sample_df = pd.read_sql_query("SELECT * FROM tabela LIMIT 10", engine)
+        sample_df = pd.read_sql_query(f"SELECT * FROM {table_name} LIMIT 10", engine)
         
         # Converte para formato serializável
         db_sample_dict = {

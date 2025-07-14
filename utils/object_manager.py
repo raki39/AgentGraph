@@ -19,6 +19,8 @@ class ObjectManager:
         self._cache_managers: Dict[str, Any] = {}
         # Mapeamento para relacionar agentes com seus bancos
         self._agent_db_mapping: Dict[str, str] = {}
+        # Metadados de conexões (CSV/PostgreSQL)
+        self._connection_metadata: Dict[str, Dict[str, Any]] = {}
     
     def store_sql_agent(self, agent: Any, db_id: str = None) -> str:
         """Armazena agente SQL e retorna ID"""
@@ -128,8 +130,45 @@ class ObjectManager:
         self._databases.clear()
         self._cache_managers.clear()
         self._agent_db_mapping.clear()
+        self._connection_metadata.clear()
         logging.info("Todos os objetos foram limpos do gerenciador")
-    
+
+    def store_connection_metadata(self, connection_id: str, metadata: Dict[str, Any]) -> str:
+        """
+        Armazena metadados de conexão
+
+        Args:
+            connection_id: ID da conexão
+            metadata: Metadados da conexão
+
+        Returns:
+            ID dos metadados armazenados
+        """
+        self._connection_metadata[connection_id] = metadata
+        logging.info(f"Metadados de conexão armazenados com ID: {connection_id}")
+        return connection_id
+
+    def get_connection_metadata(self, connection_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Recupera metadados de conexão pelo ID
+
+        Args:
+            connection_id: ID da conexão
+
+        Returns:
+            Metadados da conexão ou None se não encontrado
+        """
+        return self._connection_metadata.get(connection_id)
+
+    def get_all_connection_metadata(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Retorna todos os metadados de conexão
+
+        Returns:
+            Dicionário com todos os metadados
+        """
+        return self._connection_metadata.copy()
+
     def get_stats(self) -> Dict[str, int]:
         """Retorna estatísticas dos objetos armazenados"""
         return {
@@ -138,7 +177,8 @@ class ObjectManager:
             "databases": len(self._databases),
             "cache_managers": len(self._cache_managers),
             "general_objects": len(self._objects),
-            "agent_db_mappings": len(self._agent_db_mapping)
+            "agent_db_mappings": len(self._agent_db_mapping),
+            "connection_metadata": len(self._connection_metadata)
         }
 
 # Instância global do gerenciador

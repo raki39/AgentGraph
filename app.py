@@ -67,7 +67,7 @@ def run_async(coro):
     
     return loop.run_until_complete(coro)
 
-def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool = False, processing_enabled: bool = False, processing_model: str = "GPT-4o-mini") -> Tuple[str, Optional[str]]:
+def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool = False, processing_enabled: bool = False, processing_model: str = "GPT-4o-mini", connection_type: str = "csv", postgresql_config: Optional[Dict] = None, selected_table: str = None, single_table_mode: bool = False) -> Tuple[str, Optional[str]]:
     """
     Processa resposta do chatbot usando LangGraph
 
@@ -77,6 +77,10 @@ def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool =
         advanced_mode: Se deve usar refinamento avançado
         processing_enabled: Se o Processing Agent está habilitado
         processing_model: Modelo para o Processing Agent
+        connection_type: Tipo de conexão ("csv" ou "postgresql")
+        postgresql_config: Configuração PostgreSQL (se aplicável)
+        selected_table: Tabela selecionada (para PostgreSQL)
+        single_table_mode: Se deve usar apenas uma tabela (PostgreSQL)
 
     Returns:
         Tupla com (resposta_texto, caminho_imagem_grafico)
@@ -93,7 +97,11 @@ def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool =
             selected_model=selected_model,
             advanced_mode=advanced_mode,
             processing_enabled=processing_enabled,
-            processing_model=processing_model
+            processing_model=processing_model,
+            connection_type=connection_type,
+            postgresql_config=postgresql_config,
+            selected_table=selected_table,
+            single_table_mode=single_table_mode
         ))
 
         response_text = result.get("response", "Erro ao processar resposta")
@@ -238,6 +246,73 @@ def reset_system() -> str:
         logging.error(error_msg)
         return error_msg
 
+def handle_postgresql_connection(host: str, port: str, database: str, username: str, password: str) -> str:
+    """
+    Processa conexão PostgreSQL
+
+    Args:
+        host: Host do PostgreSQL
+        port: Porta do PostgreSQL
+        database: Nome do banco
+        username: Nome de usuário
+        password: Senha
+
+    Returns:
+        Mensagem de feedback
+    """
+    global graph_manager
+
+    if not graph_manager:
+        return "❌ Sistema não inicializado."
+
+    try:
+        # Valida campos obrigatórios
+        if not all([host, port, database, username, password]):
+            return "❌ Todos os campos são obrigatórios para conexão PostgreSQL."
+
+        # Valida porta
+        try:
+            port_int = int(port)
+            if port_int < 1 or port_int > 65535:
+                return "❌ Porta deve estar entre 1 e 65535."
+        except ValueError:
+            return "❌ Porta deve ser um número válido."
+
+        # Prepara configuração PostgreSQL
+        postgresql_config = {
+            "host": host.strip(),
+            "port": port_int,
+            "database": database.strip(),
+            "username": username.strip(),
+            "password": password
+        }
+
+        # Cria estado inicial para a conexão
+        initial_state = {
+            "user_input": "Conectar PostgreSQL",
+            "selected_model": "gpt-4o-mini",
+            "advanced_mode": False,
+            "processing_enabled": False,
+            "processing_model": "gpt-4o-mini",
+            "connection_type": "postgresql",
+            "postgresql_config": postgresql_config,
+            "selected_table": None,
+            "single_table_mode": False
+        }
+
+        # Processa conexão através do LangGraph
+        logging.info(f"[POSTGRESQL] Iniciando conexão: {host}:{port}/{database}")
+        result = run_async(graph_manager.handle_postgresql_connection(initial_state))
+
+        logging.info(f"[POSTGRESQL] Resultado da conexão: {result}")
+        return result.get("message", "Erro na conexão PostgreSQL")
+
+    except Exception as e:
+        error_msg = f"❌ Erro ao conectar PostgreSQL: {e}"
+        logging.error(error_msg)
+        logging.error(f"[POSTGRESQL] Detalhes do erro: {type(e).__name__}: {str(e)}")
+        return error_msg
+
 def toggle_advanced_mode(enabled: bool) -> str:
     """
     Alterna modo avançado
@@ -266,7 +341,7 @@ def toggle_history():
     else:
         return {}
 
-def respond(message: str, chat_history: List[Dict[str, str]], selected_model: str, advanced_mode: bool, processing_enabled: bool = False, processing_model: str = "GPT-4o-mini"):
+def respond(message: str, chat_history: List[Dict[str, str]], selected_model: str, advanced_mode: bool, processing_enabled: bool = False, processing_model: str = "GPT-4o-mini", connection_type: str = "csv", postgresql_config: Optional[Dict] = None, selected_table: str = None, single_table_mode: bool = False):
     """
     Função de resposta para o chatbot Gradio
 
@@ -277,6 +352,10 @@ def respond(message: str, chat_history: List[Dict[str, str]], selected_model: st
         advanced_mode: Modo avançado habilitado
         processing_enabled: Se o Processing Agent está habilitado
         processing_model: Modelo para o Processing Agent
+        connection_type: Tipo de conexão ("csv" ou "postgresql")
+        postgresql_config: Configuração PostgreSQL (se aplicável)
+        selected_table: Tabela selecionada (para PostgreSQL)
+        single_table_mode: Se deve usar apenas uma tabela (PostgreSQL)
 
     Returns:
         Tupla com (mensagem_vazia, histórico_atualizado, imagem_grafico)
@@ -294,7 +373,7 @@ def respond(message: str, chat_history: List[Dict[str, str]], selected_model: st
         return "", chat_history, None
 
     # Processa resposta
-    response, graph_image_path = chatbot_response(message, selected_model, advanced_mode, processing_enabled, processing_model)
+    response, graph_image_path = chatbot_response(message, selected_model, advanced_mode, processing_enabled, processing_model, connection_type, postgresql_config, selected_table, single_table_mode)
 
     # Atualiza histórico no formato messages
     chat_history.append({"role": "user", "content": message})
@@ -341,12 +420,57 @@ def create_interface():
         with gr.Row():
             with gr.Column(scale=1):
                 gr.Markdown("## Configurações")
-                model_selector = gr.Dropdown(list(AVAILABLE_MODELS.keys()), value=DEFAULT_MODEL, label="")
-                csv_file = gr.File(file_types=[".csv"], label="")
-                upload_feedback = gr.Markdown()
-                advanced_checkbox = gr.Checkbox(label="Refinar Resposta")
+                model_selector = gr.Dropdown(list(AVAILABLE_MODELS.keys()), value=DEFAULT_MODEL, label="Modelo LLM")
 
-                # Controles do Processing Agent
+                # Seleção de tipo de conexão
+                gr.Markdown("### Tipo de Conexão")
+                connection_type = gr.Radio(
+                    choices=["csv", "postgresql"],
+                    value="csv",
+                    label="",
+                    info="Escolha o tipo de conexão de dados"
+                )
+
+                # Seção CSV
+                with gr.Group(visible=True) as csv_section:
+                    gr.Markdown("**Upload CSV**")
+                    csv_file = gr.File(file_types=[".csv"], label="Arquivo CSV")
+                    upload_feedback = gr.Markdown()
+
+                # Seção PostgreSQL
+                with gr.Group(visible=False) as postgresql_section:
+                    gr.Markdown("**Conexão PostgreSQL**")
+                    pg_host = gr.Textbox(label="Host", placeholder="localhost")
+                    pg_port = gr.Textbox(label="Porta", value="5432", placeholder="5432")
+                    pg_database = gr.Textbox(label="Banco de Dados", placeholder="nome_do_banco")
+                    pg_username = gr.Textbox(label="Usuário", placeholder="usuario")
+                    pg_password = gr.Textbox(label="Senha", type="password", placeholder="senha")
+                    pg_connect_btn = gr.Button("Conectar PostgreSQL", variant="primary")
+                    pg_feedback = gr.Markdown()
+
+                    # Seletor de tabela (visível apenas após conexão)
+                    with gr.Group(visible=False) as pg_table_section:
+                        gr.Markdown("**Configuração de Tabelas**")
+
+                        # Toggle para modo de tabela única
+                        pg_single_table_mode = gr.Checkbox(
+                            label="Modo Tabela Única",
+                            value=False,
+                            info="Ativado: Usar apenas uma tabela | Desativado: Usar todas as tabelas (permite JOINs)"
+                        )
+
+                        # Seletor de tabela (visível apenas quando modo único ativado)
+                        with gr.Group(visible=False) as pg_table_selector_group:
+                            pg_table_selector = gr.Dropdown(
+                                choices=[],
+                                label="Tabela Selecionada",
+                                info="Escolha a tabela para análise (modo único)",
+                                interactive=True
+                            )
+
+                        pg_table_info = gr.Markdown()
+
+                # Controles do Processing Agent (acima do Refinar Resposta)
                 processing_checkbox = gr.Checkbox(label="Usar Processing Agent", value=False)
                 processing_model_selector = gr.Dropdown(
                     choices=list(AVAILABLE_MODELS.keys()) + list(REFINEMENT_MODELS.keys()),
@@ -354,6 +478,8 @@ def create_interface():
                     label="Modelo do Processing Agent",
                     visible=False
                 )
+
+                advanced_checkbox = gr.Checkbox(label="Refinar Resposta")
 
                 # Status do LangSmith
                 if is_langsmith_enabled():
@@ -391,9 +517,20 @@ def create_interface():
                 download_file = gr.File(visible=False)
         
         # Event handlers (usando as funções originais do sistema)
-        def handle_response_with_graph(message, chat_history, model, advanced, processing_enabled, processing_model):
+        def handle_response_with_graph(message, chat_history, model, advanced, processing_enabled, processing_model, conn_type, pg_host, pg_port, pg_db, pg_user, pg_pass, pg_table, pg_single_mode):
             """Wrapper para lidar com resposta e gráfico"""
-            empty_msg, updated_history, graph_path = respond(message, chat_history, model, advanced, processing_enabled, processing_model)
+            # Prepara configuração PostgreSQL se necessário
+            postgresql_config = None
+            if conn_type == "postgresql":
+                postgresql_config = {
+                    "host": pg_host,
+                    "port": pg_port,
+                    "database": pg_db,
+                    "username": pg_user,
+                    "password": pg_pass
+                }
+
+            empty_msg, updated_history, graph_path = respond(message, chat_history, model, advanced, processing_enabled, processing_model, conn_type, postgresql_config, pg_table, pg_single_mode)
 
             # Controla visibilidade do componente de gráfico
             if graph_path:
@@ -405,15 +542,76 @@ def create_interface():
             """Controla visibilidade do seletor de modelo do Processing Agent"""
             return gr.update(visible=enabled)
 
+        def toggle_connection_type(conn_type):
+            """Controla visibilidade das seções de conexão"""
+            if conn_type == "csv":
+                return gr.update(visible=True), gr.update(visible=False)
+            else:  # postgresql
+                return gr.update(visible=False), gr.update(visible=True)
+
+        def handle_postgresql_connect(host, port, database, username, password):
+            """Wrapper para conexão PostgreSQL"""
+            result = handle_postgresql_connection(host, port, database, username, password)
+
+            # Se conexão foi bem-sucedida, retorna tabelas disponíveis
+            if "✅" in result:
+                try:
+                    # Obtém tabelas do ObjectManager
+                    from utils.object_manager import get_object_manager
+                    obj_manager = get_object_manager()
+
+                    # Busca metadados de conexão mais recente
+                    all_metadata = obj_manager.get_all_connection_metadata()
+                    if all_metadata:
+                        latest_metadata = list(all_metadata.values())[-1]
+                        tables = latest_metadata.get("tables", [])
+
+                        # Retorna resultado + atualização do seletor
+                        return (
+                            result,  # feedback
+                            gr.update(visible=True),  # pg_table_section
+                            False,  # pg_single_table_mode (padrão desativado)
+                            gr.update(visible=False),  # pg_table_selector_group (oculto por padrão)
+                            gr.update(choices=tables, value=tables[0] if tables else None),  # pg_table_selector
+                            f"**Modo Multi-Tabela ativo** - {len(tables)} tabelas disponíveis: {', '.join(tables[:5])}{'...' if len(tables) > 5 else ''}"  # pg_table_info
+                        )
+                except Exception as e:
+                    logging.error(f"Erro ao obter tabelas: {e}")
+
+            # Se falhou, mantém seção de tabela oculta
+            return (
+                result,  # feedback
+                gr.update(visible=False),  # pg_table_section
+                False,  # pg_single_table_mode
+                gr.update(visible=False),  # pg_table_selector_group
+                gr.update(choices=[], value=None),  # pg_table_selector
+                ""  # pg_table_info
+            )
+
+        def toggle_table_mode(single_mode_enabled, current_table):
+            """Alterna entre modo multi-tabela e tabela única"""
+            if single_mode_enabled:
+                # Modo tabela única ativado
+                return (
+                    gr.update(visible=True),  # pg_table_selector_group
+                    f"**Modo Tabela Única ativo** - Usando apenas: {current_table or 'Nenhuma selecionada'}"
+                )
+            else:
+                # Modo multi-tabela ativado
+                return (
+                    gr.update(visible=False),  # pg_table_selector_group
+                    "**Modo Multi-Tabela ativo** - Pode usar todas as tabelas e fazer JOINs"
+                )
+
         msg.submit(
             handle_response_with_graph,
-            inputs=[msg, chatbot, model_selector, advanced_checkbox, processing_checkbox, processing_model_selector],
+            inputs=[msg, chatbot, model_selector, advanced_checkbox, processing_checkbox, processing_model_selector, connection_type, pg_host, pg_port, pg_database, pg_username, pg_password, pg_table_selector, pg_single_table_mode],
             outputs=[msg, chatbot, graph_image]
         )
 
         btn.click(
             handle_response_with_graph,
-            inputs=[msg, chatbot, model_selector, advanced_checkbox, processing_checkbox, processing_model_selector],
+            inputs=[msg, chatbot, model_selector, advanced_checkbox, processing_checkbox, processing_model_selector, connection_type, pg_host, pg_port, pg_database, pg_username, pg_password, pg_table_selector, pg_single_table_mode],
             outputs=[msg, chatbot, graph_image]
         )
 
@@ -443,6 +641,25 @@ def create_interface():
             toggle_processing_agent,
             inputs=processing_checkbox,
             outputs=processing_model_selector
+        )
+
+        connection_type.change(
+            toggle_connection_type,
+            inputs=connection_type,
+            outputs=[csv_section, postgresql_section]
+        )
+
+        pg_connect_btn.click(
+            handle_postgresql_connect,
+            inputs=[pg_host, pg_port, pg_database, pg_username, pg_password],
+            outputs=[pg_feedback, pg_table_section, pg_single_table_mode, pg_table_selector_group, pg_table_selector, pg_table_info]
+        )
+
+        # Event handler para toggle de modo de tabela
+        pg_single_table_mode.change(
+            toggle_table_mode,
+            inputs=[pg_single_table_mode, pg_table_selector],
+            outputs=[pg_table_selector_group, pg_table_info]
         )
     
     return demo

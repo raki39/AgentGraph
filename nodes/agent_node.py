@@ -54,6 +54,15 @@ class AgentState(TypedDict):
     sql_context: Optional[str]  # Contexto preparado para o agente SQL
     sql_result: Optional[dict]  # Resultado do agente SQL
 
+    # Campos relacionados ao tipo de conexão
+    connection_type: str  # "csv" | "postgresql"
+    postgresql_config: Optional[dict]  # Configuração PostgreSQL
+    selected_table: Optional[str]  # Tabela selecionada (para PostgreSQL)
+    single_table_mode: bool  # Se deve usar apenas uma tabela (PostgreSQL)
+    connection_success: bool  # Se a conexão foi estabelecida com sucesso
+    connection_error: Optional[str]  # Erro na conexão
+    connection_info: Optional[dict]  # Informações da conexão estabelecida
+
 
 def should_refine_response(state: Dict[str, Any]) -> str:
     """
@@ -132,5 +141,5 @@ def route_after_cache_check(state: Dict[str, Any]) -> str:
         logging.info("[ROUTING] Direcionando para validate_processing (processing habilitado)")
         return "validate_processing"
     else:
-        logging.info("[ROUTING] Direcionando para prepare_context (fluxo normal)")
-        return "prepare_context"
+        logging.info("[ROUTING] Direcionando para connection_selection (fluxo direto)")
+        return "connection_selection"

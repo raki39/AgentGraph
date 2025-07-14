@@ -43,6 +43,12 @@ from nodes.cache_node import (
 from nodes.graph_selection_node import graph_selection_node
 from nodes.graph_generation_node import graph_generation_node
 from nodes.custom_nodes import CustomNodeManager
+from nodes.connection_selection_node import (
+    connection_selection_node,
+    validate_connection_input_node,
+    route_by_connection_type
+)
+from nodes.postgresql_connection_node import postgresql_connection_node
 from agents.sql_agent import SQLAgentManager
 from agents.tools import CacheManager
 from utils.database import create_sql_database
@@ -96,8 +102,8 @@ class AgentGraphManager:
             self.db = db
             self.db_id = self.object_manager.store_database(db)
 
-            # Cria agente SQL
-            self.sql_agent = SQLAgentManager(db)
+            # Cria agente SQL (modo padrão multi-tabela)
+            self.sql_agent = SQLAgentManager(db, single_table_mode=False, selected_table=None)
 
             # Armazena objetos no gerenciador
             self.agent_id = self.object_manager.store_sql_agent(self.sql_agent, self.db_id)
@@ -139,6 +145,15 @@ class AgentGraphManager:
             # Adiciona nós de validação e preparação
             workflow.add_node("validate_input", validate_query_input_node)
             workflow.add_node("check_cache", check_cache_node)
+
+            # Adiciona nós de conexão
+            workflow.add_node("connection_selection", connection_selection_node)
+            workflow.add_node("validate_connection", validate_connection_input_node)
+            workflow.add_node("postgresql_connection", postgresql_connection_node)
+            workflow.add_node("csv_processing", csv_processing_node)
+            workflow.add_node("create_database", create_database_from_dataframe_node)
+            workflow.add_node("load_database", load_existing_database_node)
+
             workflow.add_node("validate_processing", validate_processing_input_node)
             workflow.add_node("process_initial_context", process_initial_context_node)
             workflow.add_node("prepare_context", prepare_query_context_node)
@@ -165,22 +180,42 @@ class AgentGraphManager:
             # Fluxo principal
             workflow.add_edge("validate_input", "check_cache")
 
-            # Condicional para cache hit ou processing
+            # Condicional para cache hit ou processing/conexão
             workflow.add_conditional_edges(
                 "check_cache",
                 route_after_cache_check,
                 {
                     "update_history": "update_history",
                     "validate_processing": "validate_processing",
-                    "prepare_context": "prepare_context"
+                    "connection_selection": "connection_selection"
                 }
             )
 
             # Fluxo do Processing Agent
             workflow.add_edge("validate_processing", "process_initial_context")
             workflow.add_edge("process_initial_context", "prepare_context")
+            workflow.add_edge("prepare_context", "connection_selection")
 
-            workflow.add_edge("prepare_context", "get_db_sample")
+            # Fluxo de seleção de conexão
+            workflow.add_edge("connection_selection", "validate_connection")
+
+            # Roteamento por tipo de conexão (apenas se necessário)
+            workflow.add_conditional_edges(
+                "validate_connection",
+                route_by_connection_type,
+                {
+                    "postgresql_connection": "postgresql_connection",
+                    "csv_processing": "csv_processing",
+                    "load_database": "load_database",
+                    "get_db_sample": "get_db_sample"  # Pula conexão se já existe
+                }
+            )
+
+            # Fluxos específicos de conexão (apenas quando necessário)
+            workflow.add_edge("postgresql_connection", "get_db_sample")
+            workflow.add_edge("csv_processing", "create_database")
+            workflow.add_edge("create_database", "get_db_sample")
+            workflow.add_edge("load_database", "get_db_sample")
             workflow.add_edge("get_db_sample", "process_query")
 
             # Condicional para gráficos (após AgentSQL)
@@ -229,6 +264,10 @@ class AgentGraphManager:
         advanced_mode: bool = False,
         processing_enabled: bool = False,
         processing_model: str = "GPT-4o-mini",
+        connection_type: str = "csv",
+        postgresql_config: Optional[Dict] = None,
+        selected_table: str = None,
+        single_table_mode: bool = False,
         thread_id: str = "default"
     ) -> Dict[str, Any]:
         """
@@ -240,6 +279,10 @@ class AgentGraphManager:
             advanced_mode: Se deve usar refinamento avançado
             processing_enabled: Se deve usar o Processing Agent
             processing_model: Modelo para o Processing Agent
+            connection_type: Tipo de conexão ("csv" ou "postgresql")
+            postgresql_config: Configuração PostgreSQL (se aplicável)
+            selected_table: Tabela selecionada (para PostgreSQL)
+            single_table_mode: Se deve usar apenas uma tabela (PostgreSQL)
             thread_id: ID da thread para checkpoint
 
         Returns:
@@ -256,7 +299,7 @@ class AgentGraphManager:
                 if db_id:
                     db = self.object_manager.get_database(db_id)
                     if db:
-                        new_sql_agent = SQLAgentManager(db, selected_model)
+                        new_sql_agent = SQLAgentManager(db, selected_model, single_table_mode=False, selected_table=None)
                         self.agent_id = self.object_manager.store_sql_agent(new_sql_agent, db_id)
                         logging.info(f"Agente SQL recriado com sucesso para modelo {selected_model}")
                     else:
@@ -271,6 +314,12 @@ class AgentGraphManager:
             logging.info(f"[MAIN GRAPH] Advanced mode: {advanced_mode}")
             logging.info(f"[MAIN GRAPH] Processing enabled: {processing_enabled}")
             logging.info(f"[MAIN GRAPH] Processing model: {processing_model}")
+            logging.info(f"[MAIN GRAPH] Connection type: {connection_type}")
+            if postgresql_config:
+                logging.info(f"[MAIN GRAPH] PostgreSQL config: {postgresql_config['host']}:{postgresql_config['port']}/{postgresql_config['database']}")
+            if selected_table:
+                logging.info(f"[MAIN GRAPH] Selected table: {selected_table}")
+            logging.info(f"[MAIN GRAPH] Single table mode: {single_table_mode}")
 
             # Prepara estado inicial com IDs serializáveis
             initial_state = {
@@ -313,7 +362,15 @@ class AgentGraphManager:
                 "quality_metrics": None,
                 # Campos relacionados ao contexto SQL
                 "sql_context": None,
-                "sql_result": None
+                "sql_result": None,
+                # Campos relacionados ao tipo de conexão
+                "connection_type": connection_type,
+                "postgresql_config": postgresql_config,
+                "selected_table": selected_table,
+                "single_table_mode": single_table_mode,
+                "connection_success": self.db_id is not None,  # True se já tem conexão
+                "connection_error": None,
+                "connection_info": None
             }
             
             # Executa o grafo
@@ -372,10 +429,10 @@ class AgentGraphManager:
                 self.engine_id = db_result["engine_id"]
                 self.db_id = db_result["db_id"]
 
-                # Cria novo agente SQL
+                # Cria novo agente SQL (modo padrão multi-tabela)
                 new_engine = self.object_manager.get_engine(self.engine_id)
                 new_db = self.object_manager.get_database(self.db_id)
-                new_sql_agent = SQLAgentManager(new_db)
+                new_sql_agent = SQLAgentManager(new_db, single_table_mode=False, selected_table=None)
 
                 # Atualiza agente
                 self.agent_id = self.object_manager.store_sql_agent(new_sql_agent, self.db_id)
@@ -396,7 +453,79 @@ class AgentGraphManager:
                 "success": False,
                 "message": error_msg
             }
-    
+
+    async def handle_postgresql_connection(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Processa conexão PostgreSQL usando nova arquitetura de nós
+
+        Args:
+            state: Estado contendo configuração PostgreSQL
+
+        Returns:
+            Resultado da conexão
+        """
+        try:
+            # Adiciona campos necessários ao estado
+            state.update({
+                "success": False,
+                "message": "",
+                "connection_info": {},
+                "connection_error": None,
+                "connection_success": False
+            })
+
+            # Executa nó de conexão PostgreSQL
+            pg_result = await postgresql_connection_node(state)
+
+            if not pg_result["success"]:
+                return pg_result
+
+            # Atualiza sistema se conexão foi bem-sucedida
+            if pg_result["success"]:
+                # Atualiza IDs dos objetos
+                self.engine_id = pg_result["engine_id"]
+                self.db_id = pg_result["db_id"]
+
+                # Cria novo agente SQL com configurações do estado
+                new_engine = self.object_manager.get_engine(self.engine_id)
+                new_db = self.object_manager.get_database(self.db_id)
+
+                # Obtém configurações de tabela do estado
+                single_table_mode = state.get("single_table_mode", False)
+                selected_table = state.get("selected_table")
+                selected_model = state.get("selected_model", "gpt-4o-mini")
+
+                new_sql_agent = SQLAgentManager(
+                    new_db,
+                    selected_model,
+                    single_table_mode=single_table_mode,
+                    selected_table=selected_table
+                )
+
+                # Atualiza agente
+                self.agent_id = self.object_manager.store_sql_agent(new_sql_agent, self.db_id)
+
+                # Armazena metadados de conexão
+                connection_info = pg_result.get("connection_info", {})
+                self.object_manager.store_connection_metadata(self.db_id, connection_info)
+
+                # Limpa cache
+                cache_manager = self.object_manager.get_cache_manager(self.cache_id)
+                if cache_manager:
+                    cache_manager.clear_cache()
+
+                logging.info("[POSTGRESQL] Sistema atualizado com nova conexão PostgreSQL")
+
+            return pg_result
+
+        except Exception as e:
+            error_msg = f"❌ Erro na conexão PostgreSQL: {e}"
+            logging.error(error_msg)
+            return {
+                "success": False,
+                "message": error_msg
+            }
+
     async def reset_system(self) -> Dict[str, Any]:
         """
         Reseta o sistema ao estado inicial

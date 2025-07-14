@@ -136,8 +136,8 @@ async def reset_system_node(state: Dict[str, Any]) -> Dict[str, Any]:
         engine = obj_manager.get_engine(db_result["engine_id"])
         db = obj_manager.get_object(db_result["db_id"])
 
-        # Recria agente SQL
-        sql_agent = SQLAgentManager(db)
+        # Recria agente SQL (modo padrão multi-tabela)
+        sql_agent = SQLAgentManager(db, single_table_mode=False, selected_table=None)
 
         # Atualiza objetos no gerenciador
         engine_id = obj_manager.store_engine(engine)

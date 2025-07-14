@@ -108,10 +108,38 @@ async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
         agent_id = state.get("agent_id")
         if not agent_id:
             raise ValueError("ID do agente SQL não encontrado")
-        
+
         sql_agent = obj_manager.get_sql_agent(agent_id)
         if not sql_agent:
             raise ValueError("Agente SQL não encontrado")
+
+        # Verifica se precisa recriar o agente SQL para PostgreSQL com configurações atuais
+        connection_type = state.get("connection_type", "csv")
+        if connection_type == "postgresql":
+            single_table_mode = state.get("single_table_mode", False)
+            selected_table = state.get("selected_table")
+            selected_model = state.get("selected_model", "gpt-4o-mini")
+
+            # Verifica se as configurações mudaram
+            current_single_mode = getattr(sql_agent, 'single_table_mode', False)
+            current_table = getattr(sql_agent, 'selected_table', None)
+            current_model = getattr(sql_agent, 'model_name', 'gpt-4o-mini')
+
+            if (single_table_mode != current_single_mode or
+                selected_table != current_table or
+                selected_model != current_model):
+
+                logging.info(f"[QUERY] Recriando agente SQL - Modo: {'único' if single_table_mode else 'multi'}, Tabela: {selected_table}")
+
+                # Recria o agente com as novas configurações
+                sql_agent.recreate_agent(
+                    single_table_mode=single_table_mode,
+                    selected_table=selected_table,
+                    new_model=selected_model
+                )
+
+                # Atualiza no ObjectManager
+                obj_manager.store_sql_agent(sql_agent, state.get("db_id"))
         
         # Executa query no agente SQL com contexto direto
         sql_result = await sql_agent.execute_query(state["sql_context"])
