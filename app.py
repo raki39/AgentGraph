@@ -682,9 +682,17 @@ async def main():
     for port in ports_to_try:
         try:
             logging.info(f"Tentando iniciar interface Gradio na porta {port}")
+
+            # Configurações para Docker
+            server_name = "0.0.0.0" if GRADIO_SHARE else "127.0.0.1"
+
+            if GRADIO_SHARE:
+                logging.info("🌐 Configurando link público do Gradio...")
+
             demo.launch(
-                share=GRADIO_SHARE,
+                server_name=server_name,
                 server_port=port if port != 0 else None,
+                share=GRADIO_SHARE,
                 show_error=True,
                 quiet=False
             )

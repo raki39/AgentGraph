@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.Python
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Environment files
+.env
+.env.*
+
+# Logs
+*.log
+logs/
+
+# Documentation
+*.md
+docs/
+
+# Test files
+test_*.py
+*_test.py
+
+# Data files que não devem ir para Docker
+*.db
+data/
+data.db
+
+# Uploads locais (mas manter tabela.csv)
+uploaded_data/
+!tabela.csv
+
+# Cache
+.cache/
+.pytest_cache/
+
+# Temporary files
+tmp/
+temp/

@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  agentgraph:
+    build: .
+    container_name: agentgraph-app
+    ports:
+      - "7860:7860"
+    environment:
+      # Configurações para link público
+      - GRADIO_SHARE=true
+      - GRADIO_PORT=7860
+      
+      # API Keys (definir no .env)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}
+      
+      # LangSmith (opcional)
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-agentgraph-docker}
+      
+      # Configurações da aplicação
+      - DEFAULT_MODEL=GPT-4o-mini
+      - MAX_ITERATIONS=40
+      - TEMPERATURE=0
+      - LOG_LEVEL=INFO
+    volumes:
+      # Persistir apenas uploads
+      - ./uploaded_data:/app/uploaded_data
+    restart: unless-stopped
