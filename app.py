@@ -31,17 +31,22 @@ logging.basicConfig(
 # Variáveis globais
 graph_manager = None
 show_history_flag = False
+connection_ready = False  # Controla se a conexão está pronta para uso
+chat_blocked = False      # Controla se o chat está bloqueado durante carregamento
 
 async def initialize_app():
     """Inicializa a aplicação"""
-    global graph_manager
-    
+    global graph_manager, connection_ready
+
     try:
         # Valida configurações
         validate_config()
-        
+
         # Inicializa o grafo
         graph_manager = await initialize_graph()
+
+        # Inicializa como conectado (base padrão já carregada)
+        connection_ready = True
 
         # Informa sobre o status do LangSmith
         if is_langsmith_enabled():
@@ -78,9 +83,9 @@ def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool =
         processing_enabled: Se o Processing Agent está habilitado
         processing_model: Modelo para o Processing Agent
         connection_type: Tipo de conexão ("csv" ou "postgresql")
-        postgresql_config: Configuração PostgreSQL (se aplicável)
-        selected_table: Tabela selecionada (para PostgreSQL)
-        single_table_mode: Se deve usar apenas uma tabela (PostgreSQL)
+        postgresql_config: Configuração postgresql (se aplicável)
+        selected_table: Tabela selecionada (para postgresql)
+        single_table_mode: Se deve usar apenas uma tabela (postgresql)
 
     Returns:
         Tupla com (resposta_texto, caminho_imagem_grafico)
@@ -154,7 +159,7 @@ def save_graph_image_to_temp(graph_image_id: str) -> Optional[str]:
 
 def handle_csv_upload(file) -> str:
     """
-    Processa upload de arquivo CSV
+    Processa upload de arquivo csv
 
     Args:
         file: Arquivo enviado pelo Gradio
@@ -181,9 +186,9 @@ def handle_csv_upload(file) -> str:
         if not os.path.exists(file.name):
             return f"❌ Arquivo não encontrado: {file.name}"
 
-        # Verifica se é um arquivo CSV
+        # Verifica se é um arquivo csv
         if not file.name.lower().endswith('.csv'):
-            return "❌ Por favor, selecione um arquivo CSV válido."
+            return "❌ Por favor, selecione um arquivo csv válido."
 
         # Verifica o tamanho do arquivo
         file_size = os.path.getsize(file.name)
@@ -248,11 +253,11 @@ def reset_system() -> str:
 
 def handle_postgresql_connection(host: str, port: str, database: str, username: str, password: str) -> str:
     """
-    Processa conexão PostgreSQL
+    Processa conexão postgresql
 
     Args:
-        host: Host do PostgreSQL
-        port: Porta do PostgreSQL
+        host: Host do postgresql
+        port: Porta do postgresql
         database: Nome do banco
         username: Nome de usuário
         password: Senha
@@ -268,7 +273,7 @@ def handle_postgresql_connection(host: str, port: str, database: str, username: 
     try:
         # Valida campos obrigatórios
         if not all([host, port, database, username, password]):
-            return "❌ Todos os campos são obrigatórios para conexão PostgreSQL."
+            return "❌ Todos os campos são obrigatórios para conexão postgresql."
 
         # Valida porta
         try:
@@ -278,7 +283,7 @@ def handle_postgresql_connection(host: str, port: str, database: str, username: 
         except ValueError:
             return "❌ Porta deve ser um número válido."
 
-        # Prepara configuração PostgreSQL
+        # Prepara configuração postgresql
         postgresql_config = {
             "host": host.strip(),
             "port": port_int,
@@ -289,7 +294,7 @@ def handle_postgresql_connection(host: str, port: str, database: str, username: 
 
         # Cria estado inicial para a conexão
         initial_state = {
-            "user_input": "Conectar PostgreSQL",
+            "user_input": "Conectar postgresql",
             "selected_model": "gpt-4o-mini",
             "advanced_mode": False,
             "processing_enabled": False,
@@ -305,10 +310,10 @@ def handle_postgresql_connection(host: str, port: str, database: str, username: 
         result = run_async(graph_manager.handle_postgresql_connection(initial_state))
 
         logging.info(f"[POSTGRESQL] Resultado da conexão: {result}")
-        return result.get("message", "Erro na conexão PostgreSQL")
+        return result.get("message", "Erro na conexão postgresql")
 
     except Exception as e:
-        error_msg = f"❌ Erro ao conectar PostgreSQL: {e}"
+        error_msg = f"❌ Erro ao conectar postgresql: {e}"
         logging.error(error_msg)
         logging.error(f"[POSTGRESQL] Detalhes do erro: {type(e).__name__}: {str(e)}")
         return error_msg
@@ -353,9 +358,9 @@ def respond(message: str, chat_history: List[Dict[str, str]], selected_model: st
         processing_enabled: Se o Processing Agent está habilitado
         processing_model: Modelo para o Processing Agent
         connection_type: Tipo de conexão ("csv" ou "postgresql")
-        postgresql_config: Configuração PostgreSQL (se aplicável)
-        selected_table: Tabela selecionada (para PostgreSQL)
-        single_table_mode: Se deve usar apenas uma tabela (PostgreSQL)
+        postgresql_config: Configuração postgresql (se aplicável)
+        selected_table: Tabela selecionada (para postgresql)
+        single_table_mode: Se deve usar apenas uma tabela (postgresql)
 
     Returns:
         Tupla com (mensagem_vazia, histórico_atualizado, imagem_grafico)
@@ -383,16 +388,126 @@ def respond(message: str, chat_history: List[Dict[str, str]], selected_model: st
 
 def handle_csv_and_clear_chat(file):
     """
-    Processa CSV e limpa chat
+    Processa csv e limpa chat com indicador de carregamento melhorado
 
     Args:
-        file: Arquivo CSV
+        file: Arquivo csv
 
     Returns:
-        Tupla com (feedback, chat_limpo, grafico_limpo)
+        Tupla com (feedback, chat_limpo, grafico_limpo, status)
     """
+    global connection_ready
+
+    if file is None:
+        connection_ready = False
+        return "", [], gr.update(visible=False), "**Status**: <span class='status-error'>Nenhum arquivo selecionado</span>"
+
+    # Indica carregamento
+    connection_ready = False
+
+    # Processa arquivo
     feedback = handle_csv_upload(file)
-    return feedback, [], gr.update(visible=False)
+
+    # Status final baseado no resultado
+    if "✅" in feedback:
+        connection_ready = True
+        final_status = "**Status**: <span class='status-connected'>csv processado com sucesso</span>"
+    else:
+        connection_ready = False
+        final_status = "**Status**: <span class='status-error'>Erro no processamento do csv</span>"
+
+    return feedback, [], gr.update(visible=False), final_status
+
+def is_connection_ready(conn_type, pg_host=None, pg_port=None, pg_db=None, pg_user=None, pg_pass=None):
+    """
+    Verifica se há uma conexão de dados ativa e pronta para uso
+
+    Args:
+        conn_type: Tipo de conexão ("csv" ou "postgresql")
+        pg_host, pg_port, pg_db, pg_user, pg_pass: Credenciais postgresql
+
+    Returns:
+        True se conexão está pronta, False caso contrário
+    """
+    global connection_ready, chat_blocked
+    return connection_ready and not chat_blocked
+
+def show_loading_in_chat(message):
+    """
+    Mostra mensagem de carregamento apenas no chat
+
+    Args:
+        message: Mensagem de carregamento
+
+    Returns:
+        Histórico atualizado com mensagem de carregamento
+    """
+    global chat_blocked
+    chat_blocked = True
+
+    return [
+        {"role": "user", "content": "Alterando tipo de conexão..."},
+        {"role": "assistant", "content": f"🔄 {message}"}
+    ]
+
+def clear_loading_from_chat():
+    """
+    Remove carregamento do chat
+    """
+    global chat_blocked
+    chat_blocked = False
+
+def load_default_csv_and_cleanup_postgresql():
+    """
+    Carrega a base csv padrão e limpa conexões postgresql ativas
+
+    Returns:
+        Mensagem de feedback sobre a operação
+    """
+    global connection_ready
+
+    try:
+        from utils.config import DEFAULT_CSV_PATH
+        from utils.object_manager import get_object_manager
+        import os
+
+        # Verifica se o arquivo padrão existe
+        if not os.path.exists(DEFAULT_CSV_PATH):
+            connection_ready = False
+            return "Arquivo csv padrão (tabela.csv) não encontrado"
+
+        # Limpa conexões postgresql ativas
+        obj_manager = get_object_manager()
+
+        # Fecha engines postgresql (SQLAlchemy engines têm método dispose)
+        for engine_id, engine in obj_manager._engines.items():
+            try:
+                if hasattr(engine, 'dispose'):
+                    engine.dispose()
+                    logging.info(f"[CLEANUP] Engine postgresql {engine_id} fechada")
+            except Exception as e:
+                logging.warning(f"[CLEANUP] Erro ao fechar engine {engine_id}: {e}")
+
+        # Limpa objetos postgresql do ObjectManager
+        obj_manager.clear_all()
+        logging.info("[CLEANUP] Objetos postgresql limpos do ObjectManager")
+
+        # Carrega csv padrão através do LangGraph
+        logging.info(f"[CSV_DEFAULT] Carregando arquivo padrão: {DEFAULT_CSV_PATH}")
+        result = run_async(graph_manager.handle_csv_upload(DEFAULT_CSV_PATH))
+
+        if result.get("success", False):
+            connection_ready = True
+            return f"✅ Base padrão carregada: {os.path.basename(DEFAULT_CSV_PATH)}"
+        else:
+            connection_ready = False
+            return f"Erro ao carregar base padrão: {result.get('message', 'Erro desconhecido')}"
+
+    except Exception as e:
+        connection_ready = False
+        error_msg = f"Erro ao carregar base padrão: {e}"
+        logging.error(f"[CSV_DEFAULT] {error_msg}")
+        return error_msg
 
 def reset_all():
     """
@@ -408,10 +523,120 @@ def reset_all():
 def create_interface():
     """Cria interface Gradio"""
 
-    # CSS customizado para pequeno espaçamento lateral
+    # CSS customizado para interface limpa e moderna
     custom_css = """
     .gradio-container {
         padding: 20px 30px !important;
+    }
+
+    /* Seções de configuração */
+    .config-section {
+        background: #f8f9fa;
+        border-radius: 15px;
+        padding: 0;
+        margin: 16px 0;
+        overflow: hidden;
+    }
+
+    /* Headers dos containers com espaçamento adequado */
+    .gradio-container h3 {
+        margin: 0 !important;
+        color: #f1f3f4 !important;
+        font-size: 16px !important;
+        font-weight: 600 !important;
+    }
+
+    /* Espaçamento para status e informações nos containers */
+    .config-section .status-connected,
+    .config-section .status-loading,
+    .config-section .status-error,
+    .config-section .status-waiting {
+        padding: 8px 20px !important;
+        display: block !important;
+    }
+
+    .prose.svelte-lag733 {
+        padding: 12px 20px !important;
+        margin: 0 !important;
+    }
+
+    /* Conteúdo dos containers */
+    .config-content {
+        padding: 20px;
+    }
+
+    /* Status indicators melhorados */
+    .status-connected {
+        color: #28a745;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .status-loading {
+        color: #ffc107;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .status-loading::before {
+        content: "⏳";
+        animation: pulse 1.5s infinite;
+    }
+
+    .status-error {
+        color: #dc3545;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .status-waiting {
+        color: #6c757d;
+        font-weight: 500;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    /* Animação de carregamento */
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    /* Espaçamentos internos */
+    .gr-form {
+        padding: 16px;
+    }
+
+    .gr-box {
+        padding: 16px;
+        margin: 12px 0;
+    }
+
+    /* Melhorias para seção postgresql */
+    .pg-section {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 12px 0;
+    }
+
+    .pg-feedback {
+        padding: 12px;
+        margin: 8px 0;
+        border-radius: 6px;
+        background: #f1f3f4;
     }
     """
 
@@ -420,74 +645,139 @@ def create_interface():
         with gr.Row():
             with gr.Column(scale=1):
                 gr.Markdown("## Configurações")
-                model_selector = gr.Dropdown(list(AVAILABLE_MODELS.keys()), value=DEFAULT_MODEL, label="Modelo LLM")
 
-                # Seleção de tipo de conexão
-                gr.Markdown("### Tipo de Conexão")
-                connection_type = gr.Radio(
-                    choices=["csv", "postgresql"],
-                    value="csv",
-                    label="",
-                    info="Escolha o tipo de conexão de dados"
-                )
+                # 1. CONEXÃO DE DADOS
+                with gr.Group():
+                    gr.Markdown("### Conexão de Dados")
 
-                # Seção CSV
-                with gr.Group(visible=True) as csv_section:
-                    gr.Markdown("**Upload CSV**")
-                    csv_file = gr.File(file_types=[".csv"], label="Arquivo CSV")
-                    upload_feedback = gr.Markdown()
-
-                # Seção PostgreSQL
-                with gr.Group(visible=False) as postgresql_section:
-                    gr.Markdown("**Conexão PostgreSQL**")
-                    pg_host = gr.Textbox(label="Host", placeholder="localhost")
-                    pg_port = gr.Textbox(label="Porta", value="5432", placeholder="5432")
-                    pg_database = gr.Textbox(label="Banco de Dados", placeholder="nome_do_banco")
-                    pg_username = gr.Textbox(label="Usuário", placeholder="usuario")
-                    pg_password = gr.Textbox(label="Senha", type="password", placeholder="senha")
-                    pg_connect_btn = gr.Button("Conectar PostgreSQL", variant="primary")
-                    pg_feedback = gr.Markdown()
-
-                    # Seletor de tabela (visível apenas após conexão)
-                    with gr.Group(visible=False) as pg_table_section:
-                        gr.Markdown("**Configuração de Tabelas**")
-
-                        # Toggle para modo de tabela única
-                        pg_single_table_mode = gr.Checkbox(
-                            label="Modo Tabela Única",
-                            value=False,
-                            info="Ativado: Usar apenas uma tabela | Desativado: Usar todas as tabelas (permite JOINs)"
+                    with gr.Group():
+                        connection_type = gr.Radio(
+                            choices=[("CSV", "csv"), ("PostgreSQL", "postgresql")],
+                            value="csv",
+                            label="Tipo de Conexão"
                         )
 
-                        # Seletor de tabela (visível apenas quando modo único ativado)
-                        with gr.Group(visible=False) as pg_table_selector_group:
-                            pg_table_selector = gr.Dropdown(
-                                choices=[],
-                                label="Tabela Selecionada",
-                                info="Escolha a tabela para análise (modo único)",
-                                interactive=True
+                        # Status da conexão
+                        connection_status = gr.Markdown("**Status**: <span class='status-connected'>Base padrão carregada</span>")
+
+                # Seção csv
+                with gr.Group(visible=True) as csv_section:
+                    csv_file = gr.File(
+                        file_types=[".csv"],
+                        label="Arquivo csv"
+                    )
+                    upload_feedback = gr.Markdown()
+
+                # Seção postgresql
+                with gr.Group(visible=False) as postgresql_section:
+                    with gr.Group():
+                        with gr.Row():
+                            pg_host = gr.Textbox(
+                                label="Host",
+                                placeholder="localhost",
+                                scale=2
+                            )
+                            pg_port = gr.Textbox(
+                                label="Porta",
+                                value="5432",
+                                placeholder="5432",
+                                scale=1
                             )
 
-                        pg_table_info = gr.Markdown()
+                        pg_database = gr.Textbox(
+                            label="Banco de Dados",
+                            placeholder="nome_do_banco"
+                        )
 
-                # Controles do Processing Agent (acima do Refinar Resposta)
-                processing_checkbox = gr.Checkbox(label="Usar Processing Agent", value=False)
-                processing_model_selector = gr.Dropdown(
-                    choices=list(AVAILABLE_MODELS.keys()) + list(REFINEMENT_MODELS.keys()),
-                    value="GPT-4o-mini",  # Chave correta do AVAILABLE_MODELS
-                    label="Modelo do Processing Agent",
-                    visible=False
-                )
+                        with gr.Row():
+                            pg_username = gr.Textbox(
+                                label="Usuário",
+                                placeholder="usuario",
+                                scale=1
+                            )
+                            pg_password = gr.Textbox(
+                                label="Senha",
+                                type="password",
+                                placeholder="senha",
+                                scale=1
+                            )
 
-                advanced_checkbox = gr.Checkbox(label="Refinar Resposta")
+                        pg_connect_btn = gr.Button(
+                            "Conectar postgresql",
+                            variant="primary",
+                            size="lg"
+                        )
 
-                # Status do LangSmith
-                if is_langsmith_enabled():
-                    gr.Markdown(f"🔍 **LangSmith**: Ativo")
-                else:
-                    gr.Markdown("🔍 **LangSmith**: Desabilitado")
+                        pg_feedback = gr.Markdown()
 
-                reset_btn = gr.Button("Resetar")
+                    # Configuração de tabelas (visível após conexão)
+                    with gr.Group(visible=False) as pg_table_section:
+                        gr.Markdown("#### Configuração de Tabelas")
+
+                        with gr.Group():
+                            pg_single_table_mode = gr.Checkbox(
+                                label="Modo Tabela Única",
+                                value=False
+                            )
+
+                            # Seletor de tabela
+                            with gr.Group(visible=False) as pg_table_selector_group:
+                                pg_table_selector = gr.Dropdown(
+                                    choices=[],
+                                    label="Selecionar Tabela",
+                                    interactive=True
+                                )
+
+                            pg_table_info = gr.Markdown()
+
+                # 2. CONFIGURAÇÃO DE MODELOS
+                with gr.Group():
+                    gr.Markdown("### Configuração de Agentes")
+
+                    with gr.Group():
+                        # Processing Agent
+                        processing_checkbox = gr.Checkbox(
+                            label="Processing Agent",
+                            value=False
+                        )
+                        processing_model_selector = gr.Dropdown(
+                            choices=list(AVAILABLE_MODELS.keys()) + list(REFINEMENT_MODELS.keys()),
+                            value="GPT-4o-mini",
+                            label="Modelo do Processing Agent",
+                            visible=False
+                        )
+
+                        # Modelo principal SQL
+                        model_selector = gr.Dropdown(
+                            list(AVAILABLE_MODELS.keys()),
+                            value=DEFAULT_MODEL,
+                            label="Modelo SQL Principal"
+                        )
+
+                # 3. CONFIGURAÇÕES AVANÇADAS
+                with gr.Group():
+                    gr.Markdown("### Configurações Avançadas")
+
+                    with gr.Group():
+                        advanced_checkbox = gr.Checkbox(
+                            label="Refinar Resposta"
+                        )
+
+                # 4. STATUS E CONTROLES
+                with gr.Group():
+                    gr.Markdown("### Status do Sistema")
+
+                    with gr.Group():
+                        # Status do LangSmith
+                        if is_langsmith_enabled():
+                            gr.Markdown(f"**LangSmith**: Ativo")
+                        else:
+                            gr.Markdown("**LangSmith**: Desabilitado")
+
+                        reset_btn = gr.Button(
+                            "Resetar Sistema",
+                            variant="secondary"
+                        )
                 
             with gr.Column(scale=4):
                 gr.Markdown("## Agent86")
@@ -516,10 +806,27 @@ def create_interface():
 
                 download_file = gr.File(visible=False)
         
+        # Função para mostrar carregamento de transição no chat
+        def show_transition_loading(conn_type):
+            """Mostra carregamento de transição apenas no chat"""
+            if conn_type == "csv":
+                loading_chat = show_loading_in_chat("Fechando postgresql e carregando base csv padrão...")
+                return "", loading_chat, gr.update(visible=False)
+            else:
+                return "", [], gr.update(visible=False)
+
         # Event handlers (usando as funções originais do sistema)
         def handle_response_with_graph(message, chat_history, model, advanced, processing_enabled, processing_model, conn_type, pg_host, pg_port, pg_db, pg_user, pg_pass, pg_table, pg_single_mode):
             """Wrapper para lidar com resposta e gráfico"""
-            # Prepara configuração PostgreSQL se necessário
+
+            # Verifica se há conexão ativa antes de processar
+            if not is_connection_ready(conn_type, pg_host, pg_port, pg_db, pg_user, pg_pass):
+                error_msg = "⚠️ **Aguarde**: Configure e conecte a uma fonte de dados antes de fazer perguntas."
+                chat_history.append({"role": "user", "content": message})
+                chat_history.append({"role": "assistant", "content": error_msg})
+                return "", chat_history, gr.update(visible=False)
+
+            # Prepara configuração postgresql se necessário
             postgresql_config = None
             if conn_type == "postgresql":
                 postgresql_config = {
@@ -543,18 +850,72 @@ def create_interface():
             return gr.update(visible=enabled)
 
         def toggle_connection_type(conn_type):
-            """Controla visibilidade das seções de conexão"""
+            """Controla visibilidade das seções de conexão - FECHA POSTGRES IMEDIATAMENTE"""
+            global connection_ready
+
             if conn_type == "csv":
-                return gr.update(visible=True), gr.update(visible=False)
+                # PRIMEIRO: Fecha container postgresql imediatamente
+                # SEGUNDO: Executa transição em background
+                feedback_msg = load_default_csv_and_cleanup_postgresql()
+                if "✅" in feedback_msg:
+                    connection_ready = True
+                    status_msg = "**Status**: <span class='status-connected'>Base padrão carregada</span>"
+                else:
+                    connection_ready = False
+                    status_msg = "**Status**: <span class='status-error'>Erro na conexão</span>"
+
+                return (
+                    gr.update(visible=True),   # csv_section - MOSTRA IMEDIATAMENTE
+                    gr.update(visible=False),  # postgresql_section - FECHA IMEDIATAMENTE
+                    feedback_msg,              # upload_feedback
+                    status_msg,                # connection_status
+                    # Limpa campos postgresql IMEDIATAMENTE
+                    gr.update(value=""),       # pg_host
+                    gr.update(value="5432"),   # pg_port
+                    gr.update(value=""),       # pg_database
+                    gr.update(value=""),       # pg_username
+                    gr.update(value=""),       # pg_password
+                    gr.update(value=""),       # pg_feedback
+                    gr.update(visible=False),  # pg_table_section
+                    gr.update(value=False),    # pg_single_table_mode
+                    gr.update(visible=False),  # pg_table_selector_group
+                    gr.update(choices=[], value=None),  # pg_table_selector
+                    gr.update(value="")        # pg_table_info
+                )
+
             else:  # postgresql
-                return gr.update(visible=False), gr.update(visible=True)
+                connection_ready = False
+                status_msg = "**Status**: <span class='status-waiting'>Aguardando configuração postgresql</span>"
+                return (
+                    gr.update(visible=False),  # csv_section
+                    gr.update(visible=True),   # postgresql_section
+                    "",                        # upload_feedback
+                    status_msg,                # connection_status
+                    # Mantém campos postgresql como estão
+                    gr.update(),  # pg_host
+                    gr.update(),  # pg_port
+                    gr.update(),  # pg_database
+                    gr.update(),  # pg_username
+                    gr.update(),  # pg_password
+                    gr.update(),  # pg_feedback
+                    gr.update(),  # pg_table_section
+                    gr.update(),  # pg_single_table_mode
+                    gr.update(),  # pg_table_selector_group
+                    gr.update(),  # pg_table_selector
+                    gr.update()   # pg_table_info
+                )
 
         def handle_postgresql_connect(host, port, database, username, password):
-            """Wrapper para conexão PostgreSQL"""
+            """Wrapper para conexão postgresql"""
+            global connection_ready
+
+            # Executa conexão
+            connection_ready = False
             result = handle_postgresql_connection(host, port, database, username, password)
 
             # Se conexão foi bem-sucedida, retorna tabelas disponíveis
             if "✅" in result:
+                connection_ready = True
                 try:
                     # Obtém tabelas do ObjectManager
                     from utils.object_manager import get_object_manager
@@ -566,26 +927,34 @@ def create_interface():
                         latest_metadata = list(all_metadata.values())[-1]
                         tables = latest_metadata.get("tables", [])
 
+                        # Status de sucesso
+                        success_status = "**Status**: <span class='status-connected'>postgresql conectado com sucesso</span>"
+                        table_info = f"**Modo Multi-Tabela ativo** - {len(tables)} tabelas disponíveis"
+
                         # Retorna resultado + atualização do seletor
                         return (
-                            result,  # feedback
+                            f"✅ **Conectado com sucesso!** {len(tables)} tabelas encontradas",  # feedback
                             gr.update(visible=True),  # pg_table_section
                             False,  # pg_single_table_mode (padrão desativado)
                             gr.update(visible=False),  # pg_table_selector_group (oculto por padrão)
                             gr.update(choices=tables, value=tables[0] if tables else None),  # pg_table_selector
-                            f"**Modo Multi-Tabela ativo** - {len(tables)} tabelas disponíveis: {', '.join(tables[:5])}{'...' if len(tables) > 5 else ''}"  # pg_table_info
+                            table_info,  # pg_table_info
+                            success_status  # connection_status
                         )
                 except Exception as e:
                     logging.error(f"Erro ao obter tabelas: {e}")
 
             # Se falhou, mantém seção de tabela oculta
+            connection_ready = False
+            error_status = "**Status**: <span class='status-error'>Falha na conexão postgresql</span>"
             return (
                 result,  # feedback
                 gr.update(visible=False),  # pg_table_section
                 False,  # pg_single_table_mode
                 gr.update(visible=False),  # pg_table_selector_group
                 gr.update(choices=[], value=None),  # pg_table_selector
-                ""  # pg_table_info
+                "",  # pg_table_info
+                error_status  # connection_status
             )
 
         def toggle_table_mode(single_mode_enabled, current_table):
@@ -594,7 +963,7 @@ def create_interface():
                 # Modo tabela única ativado
                 return (
                     gr.update(visible=True),  # pg_table_selector_group
-                    f"**Modo Tabela Única ativo** - Usando apenas: {current_table or 'Nenhuma selecionada'}"
+                    f"**Modo Tabela Única ativo** - Usando: {current_table or 'Selecione uma tabela'}"
                 )
             else:
                 # Modo multi-tabela ativado
@@ -606,7 +975,8 @@ def create_interface():
         msg.submit(
             handle_response_with_graph,
             inputs=[msg, chatbot, model_selector, advanced_checkbox, processing_checkbox, processing_model_selector, connection_type, pg_host, pg_port, pg_database, pg_username, pg_password, pg_table_selector, pg_single_table_mode],
-            outputs=[msg, chatbot, graph_image]
+            outputs=[msg, chatbot, graph_image],
+            show_progress=True  # Mostra carregamento no input do chat
         )
 
         btn.click(
@@ -618,7 +988,8 @@ def create_interface():
         csv_file.change(
             handle_csv_and_clear_chat,
             inputs=csv_file,
-            outputs=[upload_feedback, chatbot, graph_image]
+            outputs=[upload_feedback, chatbot, graph_image, connection_status],
+            show_progress="minimal"  # Mostra carregamento mínimo
         )
 
         reset_btn.click(
@@ -643,16 +1014,24 @@ def create_interface():
             outputs=processing_model_selector
         )
 
+        # Executa toggle imediatamente (sem carregamento nos campos)
         connection_type.change(
             toggle_connection_type,
             inputs=connection_type,
-            outputs=[csv_section, postgresql_section]
+            outputs=[
+                csv_section, postgresql_section, upload_feedback, connection_status,
+                pg_host, pg_port, pg_database, pg_username, pg_password, pg_feedback,
+                pg_table_section, pg_single_table_mode, pg_table_selector_group,
+                pg_table_selector, pg_table_info
+            ],
+            show_progress=False  # Não mostra carregamento nos campos
         )
 
         pg_connect_btn.click(
             handle_postgresql_connect,
             inputs=[pg_host, pg_port, pg_database, pg_username, pg_password],
-            outputs=[pg_feedback, pg_table_section, pg_single_table_mode, pg_table_selector_group, pg_table_selector, pg_table_info]
+            outputs=[pg_feedback, pg_table_section, pg_single_table_mode, pg_table_selector_group, pg_table_selector, pg_table_info, connection_status],
+            show_progress="minimal"  # Mostra carregamento mínimo
         )
 
         # Event handler para toggle de modo de tabela

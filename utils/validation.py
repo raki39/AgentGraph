@@ -8,10 +8,10 @@ from typing import Dict, Any, Tuple, Optional
 
 def validate_postgresql_config(config: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
     """
-    Valida configuração PostgreSQL completa
+    Valida configuração postgresql completa
     
     Args:
-        config: Dicionário com configuração PostgreSQL
+        config: Dicionário com configuração postgresql
         
     Returns:
         Tupla (válido, mensagem_erro)
@@ -101,7 +101,7 @@ def _is_valid_host(host: str) -> bool:
 
 def _is_valid_database_name(database: str) -> bool:
     """
-    Valida nome de banco PostgreSQL
+    Valida nome de banco postgresql
     
     Args:
         database: Nome do banco
@@ -109,7 +109,7 @@ def _is_valid_database_name(database: str) -> bool:
     Returns:
         True se válido
     """
-    # PostgreSQL: deve começar com letra ou underscore, 
+    # postgresql: deve começar com letra ou underscore, 
     # pode conter letras, números, underscores e hífens
     pattern = r'^[a-zA-Z_][a-zA-Z0-9_-]*$'
     
@@ -122,7 +122,7 @@ def _is_valid_database_name(database: str) -> bool:
 
 def _is_valid_username(username: str) -> bool:
     """
-    Valida nome de usuário PostgreSQL
+    Valida nome de usuário postgresql
     
     Args:
         username: Nome de usuário
@@ -142,7 +142,7 @@ def _is_valid_username(username: str) -> bool:
 
 def validate_csv_file_path(file_path: str) -> Tuple[bool, Optional[str]]:
     """
-    Valida caminho de arquivo CSV
+    Valida caminho de arquivo csv
     
     Args:
         file_path: Caminho do arquivo
@@ -169,7 +169,7 @@ def validate_csv_file_path(file_path: str) -> Tuple[bool, Optional[str]]:
         # Verifica tamanho do arquivo
         file_size = os.path.getsize(file_path)
         if file_size == 0:
-            return False, "Arquivo CSV está vazio"
+            return False, "Arquivo csv está vazio"
         
         # Limite de 5GB
         if file_size > 5 * 1024 * 1024 * 1024:
@@ -194,17 +194,17 @@ def validate_connection_state(state: Dict[str, Any]) -> Tuple[bool, Optional[str
     try:
         connection_type = state.get("connection_type", "csv")
         
-        if connection_type not in ["csv", "postgresql"]:
+        if connection_type.lower() not in ["csv", "postgresql"]:
             return False, f"Tipo de conexão inválido: {connection_type}"
-        
-        if connection_type == "postgresql":
+
+        if connection_type.lower() == "postgresql":
             postgresql_config = state.get("postgresql_config")
             if not postgresql_config:
-                return False, "Configuração PostgreSQL ausente"
-            
+                return False, "Configuração postgresql ausente"
+
             return validate_postgresql_config(postgresql_config)
-        
-        elif connection_type == "csv":
+
+        elif connection_type.lower() == "csv":
             file_path = state.get("file_path")
             if file_path:
                 return validate_csv_file_path(file_path)
@@ -214,7 +214,7 @@ def validate_connection_state(state: Dict[str, Any]) -> Tuple[bool, Optional[str
                 from utils.config import SQL_DB_PATH
                 
                 if not os.path.exists(SQL_DB_PATH):
-                    return False, "Nenhum arquivo CSV fornecido e nenhum banco existente"
+                    return False, "Nenhum arquivo csv fornecido e nenhum banco existente"
                 
                 return True, None
         
@@ -226,7 +226,7 @@ def validate_connection_state(state: Dict[str, Any]) -> Tuple[bool, Optional[str
 
 def sanitize_postgresql_config(config: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Sanitiza configuração PostgreSQL removendo espaços e normalizando
+    Sanitiza configuração postgresql removendo espaços e normalizando
     
     Args:
         config: Configuração original
@@ -258,7 +258,7 @@ def sanitize_postgresql_config(config: Dict[str, Any]) -> Dict[str, Any]:
         return sanitized
         
     except Exception as e:
-        logging.error(f"Erro ao sanitizar configuração PostgreSQL: {e}")
+        logging.error(f"Erro ao sanitizar configuração postgresql: {e}")
         return config
 
 
@@ -284,7 +284,7 @@ def get_connection_error_message(error: Exception) -> str:
         return "❌ Banco de dados não existe: Verifique o nome do banco"
     
     elif "connection refused" in error_str:
-        return "❌ Conexão recusada: Servidor PostgreSQL pode estar desligado"
+        return "❌ Conexão recusada: Servidor postgresql pode estar desligado"
     
     elif "timeout" in error_str:
         return "❌ Timeout na conexão: Servidor demorou muito para responder"
@@ -293,7 +293,7 @@ def get_connection_error_message(error: Exception) -> str:
         return "❌ Permissão negada: Usuário não tem acesso ao banco"
     
     elif "too many connections" in error_str:
-        return "❌ Muitas conexões: Servidor PostgreSQL está sobrecarregado"
+        return "❌ Muitas conexões: Servidor postgresql está sobrecarregado"
     
     else:
         return f"❌ Erro de conexão: {str(error)}"

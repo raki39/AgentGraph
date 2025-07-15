@@ -1,5 +1,5 @@
 """
-Nó para seleção do tipo de conexão (CSV ou PostgreSQL)
+Nó para seleção do tipo de conexão (csv ou postgresql)
 """
 import logging
 from typing import Dict, Any
@@ -23,17 +23,17 @@ async def connection_selection_node(state: Dict[str, Any]) -> Dict[str, Any]:
         connection_type = state.get("connection_type")
         
         if not connection_type:
-            # Se não foi definido, assume CSV como padrão (compatibilidade)
+            # Se não foi definido, assume csv como padrão (compatibilidade)
             connection_type = "csv"
-            logging.info("[CONNECTION_SELECTION] Tipo de conexão não definido, usando CSV como padrão")
+            logging.info("[CONNECTION_SELECTION] Tipo de conexão não definido, usando csv como padrão")
         
         # Valida tipo de conexão
         valid_types = ["csv", "postgresql"]
-        if connection_type not in valid_types:
+        if connection_type.upper() not in [t.upper() for t in valid_types]:
             error_msg = f"Tipo de conexão inválido: {connection_type}. Tipos válidos: {valid_types}"
             logging.error(f"[CONNECTION_SELECTION] {error_msg}")
             state.update({
-                "connection_type": "csv",  # Fallback para CSV
+                "connection_type": "csv",  # Fallback para csv
                 "connection_error": error_msg,
                 "connection_success": False
             })
@@ -54,7 +54,7 @@ async def connection_selection_node(state: Dict[str, Any]) -> Dict[str, Any]:
         error_msg = f"Erro na seleção de tipo de conexão: {e}"
         logging.error(f"[CONNECTION_SELECTION] {error_msg}")
         
-        # Fallback para CSV em caso de erro
+        # Fallback para csv em caso de erro
         state.update({
             "connection_type": "csv",
             "connection_error": error_msg,
@@ -102,10 +102,10 @@ def route_by_connection_type(state: Dict[str, Any]) -> str:
         logging.info("[CONNECTION_ROUTING] Conexão já estabelecida via IDs, pulando para get_db_sample")
         return "get_db_sample"
 
-    if connection_type == "postgresql":
+    if connection_type.upper() == "POSTGRESQL":
         return "postgresql_connection"
     elif file_path:
-        # Há arquivo CSV para processar
+        # Há arquivo csv para processar
         return "csv_processing"
     else:
         # Usar banco existente
