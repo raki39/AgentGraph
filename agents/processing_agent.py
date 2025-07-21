@@ -6,6 +6,7 @@ import asyncio
 from typing import Optional, Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.llms import HuggingFaceEndpoint
 from langchain.schema import HumanMessage
 
@@ -14,6 +15,7 @@ from utils.config import (
     AVAILABLE_MODELS,
     OPENAI_MODELS,
     ANTHROPIC_MODELS,
+    GOOGLE_MODELS,
     REFINEMENT_MODELS
 )
 
@@ -57,7 +59,17 @@ class ProcessingAgentManager:
                     max_retries=2,
                     timeout=60.0
                 )
-                
+
+            elif model_id in GOOGLE_MODELS:
+                # Gemini com configurações otimizadas
+                self.llm = ChatGoogleGenerativeAI(
+                    model=model_id,
+                    temperature=TEMPERATURE,
+                    max_tokens=4096,
+                    max_retries=2,
+                    timeout=60.0
+                )
+
             else:
                 # Modelos HuggingFace (refinement models)
                 self.llm = HuggingFaceEndpoint(

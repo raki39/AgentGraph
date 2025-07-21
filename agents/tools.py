@@ -10,6 +10,7 @@ from langchain_community.utilities import SQLDatabase
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 import pandas as pd
+import sqlalchemy as sa
 
 from utils.config import (
     HUGGINGFACE_API_KEY,
@@ -102,58 +103,120 @@ def detect_query_type(user_query: str) -> str:
     else:
         return 'sql_query'  # SQL normal
 
-def prepare_processing_context(user_query: str, db_sample: pd.DataFrame) -> str:
+def prepare_processing_context(user_query: str, columns_data: dict, connection_type: str = "csv", single_table_mode: bool = False, selected_table: str = None, available_tables: list = None) -> str:
     """
-    Prepara o contexto inicial para o Processing Agent
+    Prepara o contexto inicial para o Processing Agent de forma dinâmica
+
+    NOVA IMPLEMENTAÇÃO: Recebe dados já processados pelo processing_node.py
+    para evitar consultas redundantes e garantir consistência
 
     Args:
         user_query: Pergunta do usuário
-        db_sample: Amostra dos dados do banco
+        columns_data: Dados das colunas já processados pelo processing_node.py
+        Formato: {"table_name": [{"column": "nome", "type": "tipo", "examples": "exemplos", "stats": "estatísticas"}]}
+        connection_type: Tipo de conexão ("csv" ou "postgresql")
+        single_table_mode: Se está em modo tabela única (PostgreSQL)
+        selected_table: Tabela selecionada (PostgreSQL modo único)
+        available_tables: Lista de tabelas disponíveis (PostgreSQL)
 
     Returns:
         Contexto formatado para o Processing Agent
     """
-    # Obtém informações detalhadas das colunas
+    logging.info(f"[TOOLS] ===== PREPARANDO CONTEXTO =====")
+    logging.info(f"[TOOLS] Connection type: {connection_type}")
+    logging.info(f"[TOOLS] Single table mode: {single_table_mode}")
+    logging.info(f"[TOOLS] Selected table: {selected_table}")
+    logging.info(f"[TOOLS] Available tables: {available_tables}")
+    logging.info(f"[TOOLS] Columns data keys: {list(columns_data.keys()) if columns_data else 'None'}")
+
+    # Processa os dados das colunas baseado no tipo de conexão
     column_info = []
-    for col in db_sample.columns:
-        col_data = db_sample[col].dropna()
-        if len(col_data) > 0:
-            # Exemplos de valores únicos (máximo 5)
-            unique_values = col_data.unique()[:5]
-            examples = ", ".join([str(v) for v in unique_values])
 
-            # Tipo de dados
-            dtype = str(col_data.dtype)
+    if connection_type.lower() == "postgresql":
+        logging.info(f"[TOOLS] 🔵 PROCESSANDO POSTGRESQL")
 
-            # Estatísticas básicas para colunas numéricas
-            stats = ""
-            if col_data.dtype in ['int64', 'float64']:
-                try:
-                    min_val = col_data.min()
-                    max_val = col_data.max()
-                    stats = f" | Min: {min_val}, Max: {max_val}"
-                except:
-                    pass
+        if single_table_mode and selected_table:
+            # PostgreSQL - Modo tabela única: usa APENAS dados da tabela selecionada
+            logging.info(f"[TOOLS] 🔵 PostgreSQL MODO ÚNICO - tabela: {selected_table}")
 
-            column_info.append(f"- {col} ({dtype}): {examples}{stats}")
+            table_data = columns_data.get(selected_table, [])
+            if table_data:
+                for col_info in table_data:
+                    column_line = f"- {col_info['column']} ({col_info['type']})"
+                    if col_info.get('examples'):
+                        column_line += f": {col_info['examples']}"
+                    if col_info.get('stats'):
+                        column_line += f"{col_info['stats']}"
+                    column_info.append(column_line)
+
+                logging.info(f"[TOOLS] ✅ PostgreSQL modo único processado: {len(column_info)} colunas")
+            else:
+                logging.warning(f"[TOOLS] ⚠️ Nenhum dado encontrado para tabela {selected_table}")
+
+        else:
+            # PostgreSQL - Modo multi-tabela: usa dados de TODAS as tabelas
+            logging.info(f"[TOOLS] 🔵 PostgreSQL MODO MULTI-TABELA - {len(columns_data)} tabelas")
+
+            for table_name, table_columns in columns_data.items():
+                column_info.append(f"\n**Tabela: {table_name}**")
+
+                if table_columns:
+                    for col_info in table_columns:
+                        column_line = f"- {col_info['column']} ({col_info['type']})"
+                        if col_info.get('examples'):
+                            column_line += f": {col_info['examples']}"
+                        if col_info.get('stats'):
+                            column_line += f"{col_info['stats']}"
+                        column_info.append(column_line)
+                else:
+                    column_info.append("- (Tabela sem dados ou colunas)")
+
+                logging.info(f"[TOOLS] ✅ Tabela {table_name} processada: {len(table_columns)} colunas")
+
+            logging.info(f"[TOOLS] ✅ PostgreSQL multi-tabela processado: {len(column_info)} itens")
+
+    else:
+        # CSV/SQLite - usa APENAS dados da tabela CSV
+        logging.info(f"[TOOLS] 🟡 PROCESSANDO CSV/SQLITE")
+
+        # Para CSV, deve haver apenas uma entrada no columns_data
+        for table_name, table_columns in columns_data.items():
+            for col_info in table_columns:
+                column_line = f"- {col_info['column']} ({col_info['type']})"
+                if col_info.get('examples'):
+                    column_line += f": {col_info['examples']}"
+                if col_info.get('stats'):
+                    column_line += f"{col_info['stats']}"
+                column_info.append(column_line)
+
+        logging.info(f"[TOOLS] ✅ CSV/SQLite processado: {len(column_info)} colunas")
 
     columns_description = "\n".join(column_info)
+    logging.info(f"[TOOLS] ===== CONTEXTO FINAL =====")
+    logging.info(f"[TOOLS] Total de itens no contexto: {len(column_info)}")
+    logging.info(f"[TOOLS] ===== FIM PREPARAÇÃO =====")
 
-    # Adiciona algumas linhas de exemplo dos dados
-    sample_rows = []
-    num_rows_to_show = min(3, len(db_sample))
-    for i in range(num_rows_to_show):
-        row_data = []
-        for col in db_sample.columns:
-            value = db_sample.iloc[i][col]
-            # Trunca valores muito longos
-            str_value = str(value)
-            if len(str_value) > 30:
-                str_value = str_value[:27] + "..."
-            row_data.append(f"{col}: {str_value}")
-        sample_rows.append("  " + " | ".join(row_data))
-
-    sample_data = "\n".join(sample_rows) if sample_rows else "Nenhuma linha de exemplo disponível"
+    # Determina informações da tabela de forma dinâmica
+    if connection_type.lower() == "postgresql":
+        if single_table_mode and selected_table:
+            # Modo tabela única PostgreSQL
+            table_info = f"Nome da tabela: {selected_table}"
+            table_instructions = f'Use apenas as colunas que existem na tabela "{selected_table}".'
+            context_note = f"MODO TABELA ÚNICA ATIVO - Trabalhando apenas com a tabela '{selected_table}'"
+        else:
+            # Modo multi-tabela PostgreSQL
+            if available_tables:
+                tables_list = ", ".join(available_tables)
+                table_info = f"Tabelas disponíveis: {tables_list}"
+            else:
+                table_info = "Múltiplas tabelas disponíveis no PostgreSQL"
+            table_instructions = "Use as tabelas disponíveis no PostgreSQL. Pode fazer JOINs entre tabelas quando necessário."
+            context_note = "MODO MULTI-TABELA ATIVO - Pode usar todas as tabelas e fazer JOINs"
+    else:
+        # Para CSV/SQLite, usa tabela padrão
+        table_info = "Nome da tabela: tabela"
+        table_instructions = 'Use apenas as colunas que existem na tabela "tabela".'
+        context_note = "CONEXÃO CSV/SQLite - Dados convertidos para tabela única"
 
     context = f"""
     Você é um especialista em SQL que deve analisar a pergunta do usuário e gerar uma query SQL otimizada.
@@ -161,19 +224,17 @@ def prepare_processing_context(user_query: str, db_sample: pd.DataFrame) -> str:
     INSTRUÇÕES IMPORTANTES:
     1. Analise a pergunta do usuário e o contexto dos dados
     2. Gere uma query SQL precisa e otimizada
-    3. Use apenas as colunas que existem na tabela "tabela"
+    3. {table_instructions}
     4. Para cálculos complexos, use CTEs quando necessário
     5. Inclua LIMIT quando apropriado para evitar resultados excessivos
     6. Considere os tipos de dados e valores de exemplo
 
     CONTEXTO DOS DADOS:
-    Nome da tabela: tabela
+    {context_note}
+    {table_info}
 
-    Colunas disponíveis com tipos e exemplos:
+    Colunas disponíveis com tipos e exemplos (baseado na amostra atual):
     {columns_description}
-
-    Exemplos de linhas dos dados:
-    {sample_data}
 
     PERGUNTA DO USUÁRIO:
     {user_query}

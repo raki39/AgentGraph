@@ -12,6 +12,7 @@ load_dotenv()
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # Configurações do LangSmith (observabilidade)
 LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
@@ -30,7 +31,9 @@ AVAILABLE_MODELS = {
     "GPT-o3-mini": "o3-mini",
     "GPT-4o-mini": "gpt-4o-mini",
     "GPT-4o": "gpt-4o",
-    "Claude-3.5-Sonnet": "claude-3-5-sonnet-20241022"
+    "Claude-3.5-Sonnet": "claude-3-5-sonnet-20241022",
+    "Gemini-1.5-Pro": "gemini-1.5-pro",
+    "Gemini-2.0-Flash": "gemini-2.0-flash"
 }
 
 # Modelos para refinamento (apenas uso interno)
@@ -52,7 +55,9 @@ MAX_TOKENS_MAP = {
     "o3-mini": 4096,
     "gpt-4o-mini": 4096,
     "gpt-4o": 4096,
-    "claude-3-5-sonnet-20241022": 1024
+    "claude-3-5-sonnet-20241022": 1024,
+    "gemini-1.5-pro": 4096,
+    "gemini-2.0-flash": 4096
 }
 
 # Modelos que usam OpenAI (GPT)
@@ -65,6 +70,12 @@ OPENAI_MODELS = {
 # Modelos que usam Anthropic (Claude)
 ANTHROPIC_MODELS = {
     "claude-3-5-sonnet-20241022"
+}
+
+# Modelos que usam Google (Gemini)
+GOOGLE_MODELS = {
+    "gemini-1.5-pro",
+    "gemini-2.0-flash"
 }
 
 # Modelos que usam HuggingFace (para refinamento)
@@ -98,6 +109,10 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Configuração das variáveis de ambiente para OpenAI
 if OPENAI_API_KEY:
     os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+
+# Configuração das variáveis de ambiente para Google
+if GOOGLE_API_KEY:
+    os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 
 # Configuração das variáveis de ambiente para Anthropic
 if ANTHROPIC_API_KEY:

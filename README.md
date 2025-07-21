@@ -12,6 +12,7 @@ Uma plataforma inteligente de agentes especializados que utiliza LangGraph para 
 ### 🧠 **Múltiplos Provedores LLM**
 - **OpenAI**: GPT-4o, GPT-4o-mini, o3-mini
 - **Anthropic**: Claude-3.5-Sonnet com tool-calling
+- **Google**: Gemini-1.5-Pro, Gemini-2.0-Flash
 - **HuggingFace**: LLaMA 70B, LLaMA 8B, DeepSeek-R1 (refinamento)
 
 ### 🔄 **LangGraph Avançado**
@@ -88,6 +89,7 @@ Crie/edite o arquivo `.env`:
 HUGGINGFACE_API_KEY=hf_your_key_here
 OPENAI_API_KEY=sk-your_key_here
 ANTHROPIC_API_KEY=sk-ant-your_key_here
+GOOGLE_API_KEY=your_google_api_key_here
 
 # 🔍 LangSmith - Observabilidade (OPCIONAL)
 LANGSMITH_API_KEY=lsv2_pt_your_key_here

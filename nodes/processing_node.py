@@ -41,46 +41,120 @@ async def process_initial_context_node(state: Dict[str, Any]) -> Dict[str, Any]:
             logging.warning("[PROCESSING NODE] Entrada do usuário não disponível")
             return state
         
-        # Acessa diretamente o banco de dados para criar amostra
+        # Acessa o banco de dados correto baseado no estado atual
         obj_manager = get_object_manager()
 
-        # Usa os IDs do GraphManager (que são globais)
         try:
-            # Acessa diretamente os IDs do GraphManager através do ObjectManager
-            # Pega o primeiro engine e database disponíveis (assumindo que há apenas um)
-            engines = obj_manager._engines
-            databases = obj_manager._databases
+            # Usa os IDs específicos do estado atual (não o primeiro disponível)
+            engine_id = state.get("engine_id")
+            db_id = state.get("db_id")
 
-            if not engines or not databases:
-                logging.error("[PROCESSING NODE] Nenhum engine ou database encontrado no ObjectManager")
+            logging.info(f"[PROCESSING NODE] ===== DEBUG ESTADO =====")
+            logging.info(f"[PROCESSING NODE] engine_id do estado: {engine_id}")
+            logging.info(f"[PROCESSING NODE] db_id do estado: {db_id}")
+            logging.info(f"[PROCESSING NODE] connection_type do estado: {state.get('connection_type')}")
+            logging.info(f"[PROCESSING NODE] Chaves disponíveis no estado: {list(state.keys())}")
+            logging.info(f"[PROCESSING NODE] ===== FIM DEBUG =====")
+
+            if not engine_id or not db_id:
+                logging.error("[PROCESSING NODE] IDs de engine ou database não encontrados no estado")
+                logging.error(f"[PROCESSING NODE] engine_id: {engine_id}, db_id: {db_id}")
+
+                # Fallback: tenta usar os IDs disponíveis no ObjectManager
+                logging.info("[PROCESSING NODE] Tentando fallback para IDs disponíveis...")
+                engines = obj_manager._engines
+                databases = obj_manager._databases
+
+                if engines and databases:
+                    engine_id = list(engines.keys())[-1]  # Pega o último (mais recente)
+                    db_id = list(databases.keys())[-1]    # Pega o último (mais recente)
+                    logging.info(f"[PROCESSING NODE] Fallback: usando engine_id={engine_id}, db_id={db_id}")
+                else:
+                    logging.error("[PROCESSING NODE] Nenhum engine ou database disponível no ObjectManager")
+                    return state
+
+            # Obtém engine e database específicos do estado atual
+            engine = obj_manager.get_engine(engine_id)
+            database = obj_manager.get_database(db_id)
+
+            logging.info(f"[PROCESSING NODE] Engine obtido: {engine is not None}")
+            logging.info(f"[PROCESSING NODE] Database obtido: {database is not None}")
+
+            if not engine or not database:
+                logging.error("[PROCESSING NODE] Engine ou database não encontrados no ObjectManager")
+                logging.error(f"[PROCESSING NODE] engine: {engine}, database: {database}")
+                logging.error(f"[PROCESSING NODE] Engines disponíveis: {list(obj_manager._engines.keys())}")
+                logging.error(f"[PROCESSING NODE] Databases disponíveis: {list(obj_manager._databases.keys())}")
                 return state
 
-            # Pega o primeiro engine e database disponíveis
-            engine_id = list(engines.keys())[0]
-            db_id = list(databases.keys())[0]
+            logging.info(f"[PROCESSING NODE] Usando engine {engine_id} e database {db_id} do estado atual")
 
-            engine = engines[engine_id]
-            database = databases[db_id]
+            # Detecta o tipo de engine baseado no dialect
+            engine_dialect = str(engine.dialect.name).lower()
+            connection_type = state.get("connection_type", "csv")
+            single_table_mode = state.get("single_table_mode", False)
+            selected_table = state.get("selected_table")
 
-            logging.info(f"[PROCESSING NODE] Usando engine {engine_id} e database {db_id}")
+            logging.info(f"[PROCESSING NODE] ===== DETECÇÃO DE CONEXÃO =====")
+            logging.info(f"[PROCESSING NODE] Engine dialect detectado: {engine_dialect}")
+            logging.info(f"[PROCESSING NODE] Connection type do estado: {connection_type}")
+            logging.info(f"[PROCESSING NODE] Single table mode: {single_table_mode}")
+            logging.info(f"[PROCESSING NODE] Selected table: {selected_table}")
+            logging.info(f"[PROCESSING NODE] Engine URL: {str(engine.url)}")
+            logging.info(f"[PROCESSING NODE] ===== FIM DETECÇÃO =====")
 
-            # Cria amostra diretamente do banco
+            # Validação: engine dialect deve corresponder ao connection_type
+            if connection_type.lower() == "postgresql" and engine_dialect != "postgresql":
+                logging.error(f"[PROCESSING NODE] INCONSISTÊNCIA: connection_type={connection_type} mas engine_dialect={engine_dialect}")
+                logging.error(f"[PROCESSING NODE] Isso indica que está usando o engine errado!")
+            elif connection_type.lower() == "csv" and engine_dialect != "sqlite":
+                logging.error(f"[PROCESSING NODE] INCONSISTÊNCIA: connection_type={connection_type} mas engine_dialect={engine_dialect}")
+                logging.error(f"[PROCESSING NODE] Isso indica que está usando o engine errado!")
+
+            # NOVA IMPLEMENTAÇÃO: Cria dados das colunas baseado no tipo de conexão
+            columns_data = {}
             import sqlalchemy as sa
-            with engine.connect() as conn:
-                # Obtém amostra de dados (10 linhas)
-                result = conn.execute(sa.text("SELECT * FROM tabela LIMIT 10"))
-                columns = result.keys()
-                rows = result.fetchall()
 
-                # Converte para DataFrame
-                db_sample = pd.DataFrame(rows, columns=columns)
+            if engine_dialect == "postgresql":
+                # Para PostgreSQL, processa baseado no modo
+                if single_table_mode and selected_table:
+                    # Modo tabela única - processa APENAS a tabela selecionada
+                    logging.info(f"[PROCESSING NODE] PostgreSQL - Modo tabela única: {selected_table}")
+                    columns_data[selected_table] = _extract_table_columns_info(engine, selected_table)
 
-                logging.info(f"[PROCESSING NODE] Amostra criada diretamente do banco: {db_sample.shape[0]} linhas, {db_sample.shape[1]} colunas")
-                logging.info(f"[PROCESSING NODE] Colunas: {list(db_sample.columns)}")
+                else:
+                    # Modo multi-tabela - processa TODAS as tabelas disponíveis
+                    logging.info(f"[PROCESSING NODE] PostgreSQL - Modo multi-tabela")
+
+                    # Obtém lista de todas as tabelas
+                    with engine.connect() as conn:
+                        tables_result = conn.execute(sa.text("""
+                            SELECT table_name
+                            FROM information_schema.tables
+                            WHERE table_schema = 'public'
+                            ORDER BY table_name
+                        """))
+                        available_tables = [row[0] for row in tables_result.fetchall()]
+
+                    logging.info(f"[PROCESSING NODE] Tabelas encontradas: {available_tables}")
+
+                    # Processa cada tabela (máximo 5 para performance)
+                    for table_name in available_tables[:10]:
+                        columns_data[table_name] = _extract_table_columns_info(engine, table_name)
+
+            else:
+                # Para SQLite (CSV convertido), processa tabela padrão
+                logging.info(f"[PROCESSING NODE] SQLite - processando tabela padrão")
+                columns_data["tabela"] = _extract_table_columns_info(engine, "tabela")
+
+            logging.info(f"[PROCESSING NODE] ✅ Dados das colunas extraídos para {len(columns_data)} tabela(s)")
 
         except Exception as e:
-            logging.error(f"[PROCESSING NODE] Erro ao acessar banco de dados: {e}")
+            logging.error(f"[PROCESSING NODE] ❌ Erro ao acessar banco de dados: {e}")
             logging.error(f"[PROCESSING NODE] Detalhes do erro: {str(e)}")
+            logging.error(f"[PROCESSING NODE] Tipo do erro: {type(e)}")
+            import traceback
+            logging.error(f"[PROCESSING NODE] Traceback: {traceback.format_exc()}")
             return state
         
         # Recupera ou cria Processing Agent
@@ -102,15 +176,44 @@ async def process_initial_context_node(state: Dict[str, Any]) -> Dict[str, Any]:
             state["processing_agent_id"] = processing_agent_id
             logging.info(f"[PROCESSING NODE] Novo Processing Agent criado e armazenado com ID: {processing_agent_id}")
         
-        # Prepara contexto para o Processing Agent
-        processing_context = prepare_processing_context(user_input, db_sample)
+        # Prepara contexto para o Processing Agent com dados já processados
+        connection_type = state.get("connection_type", "csv")
+        single_table_mode = state.get("single_table_mode", False)
+        selected_table = state.get("selected_table")
+
+        # Obtém lista de tabelas disponíveis se for PostgreSQL
+        available_tables = None
+        if engine_dialect == "postgresql":
+            available_tables = list(columns_data.keys())
+            logging.info(f"[PROCESSING NODE] Tabelas disponíveis para contexto: {available_tables}")
+
+        # NOVA CHAMADA: Passa dados já processados em vez de fazer consultas redundantes
+        processing_context = prepare_processing_context(
+            user_input,
+            columns_data,  # Dados já processados das colunas
+            connection_type,
+            single_table_mode,
+            selected_table,
+            available_tables
+        )
 
         logging.info(f"[PROCESSING NODE] ===== CONTEXTO PARA PRIMEIRA LLM =====")
         logging.info(f"{processing_context}")
         logging.info(f"[PROCESSING NODE] ===== FIM DO CONTEXTO =====")
-        
+
         # Executa processamento
-        processing_result = await processing_agent.process_context(processing_context)
+        logging.info(f"[PROCESSING NODE] 🚀 Iniciando execução do Processing Agent...")
+        logging.info(f"[PROCESSING NODE] Processing Agent: {processing_agent}")
+        logging.info(f"[PROCESSING NODE] Modelo: {processing_agent.model_name if processing_agent else 'N/A'}")
+
+        try:
+            processing_result = await processing_agent.process_context(processing_context)
+            logging.info(f"[PROCESSING NODE] ✅ Processing Agent executado com sucesso")
+        except Exception as e:
+            logging.error(f"[PROCESSING NODE] ❌ Erro na execução do Processing Agent: {e}")
+            import traceback
+            logging.error(f"[PROCESSING NODE] Traceback: {traceback.format_exc()}")
+            return state
 
         # Log da resposta da primeira LLM
         logging.info(f"[PROCESSING NODE] ===== RESPOSTA DA PRIMEIRA LLM =====")
@@ -228,3 +331,147 @@ async def validate_processing_input_node(state: Dict[str, Any]) -> Dict[str, Any
         state["processing_enabled"] = False
 
     return state
+
+
+def _extract_table_columns_info(engine, table_name: str) -> list:
+    """
+    Extrai informações das colunas de uma tabela específica
+
+    Args:
+        engine: Engine SQLAlchemy
+        table_name: Nome da tabela
+
+    Returns:
+        Lista de dicionários com informações das colunas
+    """
+    import sqlalchemy as sa
+    import pandas as pd
+
+    try:
+        logging.info(f"[PROCESSING NODE] Extraindo informações da tabela: {table_name}")
+
+        with engine.connect() as conn:
+            # Primeiro, tenta obter dados da tabela (máximo 5 linhas)
+            try:
+                result = conn.execute(sa.text(f"SELECT * FROM {table_name} LIMIT 5"))
+                columns = result.keys()
+                rows = result.fetchall()
+
+                if rows:
+                    # Tabela com dados - processa normalmente
+                    table_df = pd.DataFrame(rows, columns=columns)
+                    columns_info = []
+
+                    for col in table_df.columns:
+                        col_data = table_df[col].dropna()
+
+                        col_info = {
+                            "column": col,
+                            "type": str(col_data.dtype) if len(col_data) > 0 else "object",
+                            "examples": "",
+                            "stats": ""
+                        }
+
+                        if len(col_data) > 0:
+                            # Adiciona exemplos de valores
+                            unique_values = col_data.unique()[:3]
+                            col_info["examples"] = ", ".join([str(v) for v in unique_values])
+
+                            # Adiciona estatísticas para colunas numéricas
+                            if col_data.dtype in ['int64', 'float64']:
+                                try:
+                                    min_val = col_data.min()
+                                    max_val = col_data.max()
+                                    col_info["stats"] = f" | Min: {min_val}, Max: {max_val}"
+                                except:
+                                    pass
+
+                        columns_info.append(col_info)
+
+                    logging.info(f"[PROCESSING NODE] ✅ Tabela {table_name}: {len(columns_info)} colunas com dados")
+                    return columns_info
+
+                else:
+                    # Tabela sem dados - obtém apenas estrutura das colunas
+                    logging.info(f"[PROCESSING NODE] ⚠️ Tabela {table_name} sem dados - obtendo apenas estrutura")
+
+                    # Para PostgreSQL, obtém informações das colunas do schema
+                    if str(engine.dialect.name).lower() == "postgresql":
+                        schema_result = conn.execute(sa.text(f"""
+                            SELECT column_name, data_type
+                            FROM information_schema.columns
+                            WHERE table_name = '{table_name}'
+                            ORDER BY ordinal_position
+                        """))
+
+                        columns_info = []
+                        for row in schema_result.fetchall():
+                            col_info = {
+                                "column": row[0],
+                                "type": row[1],
+                                "examples": "(sem dados)",
+                                "stats": ""
+                            }
+                            columns_info.append(col_info)
+                    else:
+                        # Para SQLite, usa PRAGMA
+                        pragma_result = conn.execute(sa.text(f"PRAGMA table_info({table_name})"))
+                        columns_info = []
+                        for row in pragma_result.fetchall():
+                            col_info = {
+                                "column": row[1],  # column name
+                                "type": row[2],    # column type
+                                "examples": "(sem dados)",
+                                "stats": ""
+                            }
+                            columns_info.append(col_info)
+
+                    logging.info(f"[PROCESSING NODE] ✅ Tabela {table_name}: {len(columns_info)} colunas (estrutura apenas)")
+                    return columns_info
+
+            except Exception as e:
+                # Se falhar ao acessar a tabela, tenta obter pelo menos a estrutura
+                logging.warning(f"[PROCESSING NODE] Erro ao acessar dados da tabela {table_name}: {e}")
+
+                try:
+                    # Fallback: obtém estrutura das colunas
+                    if str(engine.dialect.name).lower() == "postgresql":
+                        schema_result = conn.execute(sa.text(f"""
+                            SELECT column_name, data_type
+                            FROM information_schema.columns
+                            WHERE table_name = '{table_name}'
+                            ORDER BY ordinal_position
+                        """))
+
+                        columns_info = []
+                        for row in schema_result.fetchall():
+                            col_info = {
+                                "column": row[0],
+                                "type": row[1],
+                                "examples": "(erro ao acessar dados)",
+                                "stats": ""
+                            }
+                            columns_info.append(col_info)
+                    else:
+                        # Para SQLite
+                        pragma_result = conn.execute(sa.text(f"PRAGMA table_info({table_name})"))
+                        columns_info = []
+                        for row in pragma_result.fetchall():
+                            col_info = {
+                                "column": row[1],
+                                "type": row[2],
+                                "examples": "(erro ao acessar dados)",
+                                "stats": ""
+                            }
+                            columns_info.append(col_info)
+
+                    logging.info(f"[PROCESSING NODE] ⚠️ Tabela {table_name}: {len(columns_info)} colunas (fallback)")
+                    return columns_info
+
+                except Exception as e2:
+                    logging.error(f"[PROCESSING NODE] ❌ Erro total ao processar tabela {table_name}: {e2}")
+                    return []
+
+    except Exception as e:
+        logging.error(f"[PROCESSING NODE] ❌ Erro ao extrair informações da tabela {table_name}: {e}")
+        return []

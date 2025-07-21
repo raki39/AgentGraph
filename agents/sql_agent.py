@@ -7,6 +7,7 @@ import asyncio
 from typing import Optional, Dict, Any, List
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_community.utilities import SQLDatabase
 from langchain.callbacks.base import BaseCallbackHandler
@@ -18,7 +19,8 @@ from utils.config import (
     TEMPERATURE,
     AVAILABLE_MODELS,
     OPENAI_MODELS,
-    ANTHROPIC_MODELS
+    ANTHROPIC_MODELS,
+    GOOGLE_MODELS
 )
 
 class SQLQueryCaptureHandler(BaseCallbackHandler):
@@ -180,6 +182,17 @@ def create_sql_agent_executor(db: SQLDatabase, model_name: str = "gpt-4o-mini", 
             )
             agent_type = "tool-calling"  # Claude usa tool-calling
 
+        elif model_id in GOOGLE_MODELS:
+            # Gemini com tool-calling e configurações otimizadas
+            llm = ChatGoogleGenerativeAI(
+                model=model_id,
+                temperature=TEMPERATURE,
+                max_tokens=4096,
+                max_retries=2,
+                timeout=60.0
+            )
+            agent_type = "tool-calling"  # Gemini usa tool-calling
+
         else:
             # Fallback para OpenAI
             llm = ChatOpenAI(
@@ -304,12 +317,13 @@ class SQLAgentManager:
             # Criar handler para capturar SQL
             sql_handler = SQLQueryCaptureHandler()
 
-            # Verifica se é agente Claude para aplicar retry
+            # Verifica se é agente Claude ou Gemini para aplicar retry
             model_id = getattr(self, 'model_name', '')
             is_claude = any(claude_model in model_id for claude_model in ANTHROPIC_MODELS)
+            is_gemini = any(gemini_model in model_id for gemini_model in GOOGLE_MODELS)
 
-            if is_claude:
-                # Usa retry com backoff para Claude
+            if is_claude or is_gemini:
+                # Usa retry com backoff para Claude e Gemini
                 response = await retry_with_backoff(
                     lambda: self.agent.invoke(
                         {"input": instruction},
