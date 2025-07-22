@@ -210,7 +210,7 @@ def create_sql_agent_executor(db: SQLDatabase, model_name: str = "gpt-4o-mini", 
             verbose=True,
             max_iterations=MAX_ITERATIONS,
             return_intermediate_steps=True,
-            top_k=10
+            top_k=30
         )
 
         logging.info(f"Agente SQL criado com sucesso usando modelo {model_name} ({model_id}) com agent_type={agent_type}")
@@ -381,7 +381,7 @@ class SQLAgentManager:
                 "intermediate_steps": [],
                 "success": False
             }
-    
+
     def get_agent_info(self) -> dict:
         """
         Retorna informações sobre o agente atual
