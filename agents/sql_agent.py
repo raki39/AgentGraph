@@ -202,7 +202,7 @@ def create_sql_agent_executor(db: SQLDatabase, model_name: str = "gpt-4o-mini", 
             agent_type = "openai-tools"
             logging.warning(f"Modelo {model_name} não reconhecido, usando gpt-4o-mini como fallback")
 
-        # Cria o agente SQL
+        # Cria o agente SQL 
         sql_agent = create_sql_agent(
             llm=llm,
             db=db_to_use,  # Usa o SQLDatabase apropriado (restrito ou completo)
@@ -210,7 +210,7 @@ def create_sql_agent_executor(db: SQLDatabase, model_name: str = "gpt-4o-mini", 
             verbose=True,
             max_iterations=MAX_ITERATIONS,
             return_intermediate_steps=True,
-            top_k=30
+            top_k=10
         )
 
         logging.info(f"Agente SQL criado com sucesso usando modelo {model_name} ({model_id}) com agent_type={agent_type}")

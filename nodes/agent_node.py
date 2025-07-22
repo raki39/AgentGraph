@@ -120,6 +120,8 @@ def route_after_cache_check(state: Dict[str, Any]) -> str:
     """
     Roteamento após verificação de cache
 
+    CACHE TEMPORARIAMENTE DESATIVADO - Sempre ignora cache hit
+
     Args:
         state: Estado atual
 
@@ -131,7 +133,11 @@ def route_after_cache_check(state: Dict[str, Any]) -> str:
     cache_hit = state.get("cache_hit", False)
     processing_enabled = state.get("processing_enabled", False)
 
-    logging.info(f"[ROUTING] Cache hit: {cache_hit}")
+    # DESATIVAÇÃO TEMPORÁRIA DO CACHE
+    # Força cache_hit = False para sempre processar queries
+    cache_hit = False
+
+    logging.info(f"[ROUTING] Cache hit: {cache_hit} (CACHE DESATIVADO TEMPORARIAMENTE)")
     logging.info(f"[ROUTING] Processing enabled: {processing_enabled}")
 
     if cache_hit:

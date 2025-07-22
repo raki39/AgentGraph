@@ -55,8 +55,9 @@ async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
         cache_id = state.get("cache_id")
         cache_manager = obj_manager.get_cache_manager(cache_id) if cache_id else None
         
+        # CACHE TEMPORARIAMENTE DESATIVADO
         # Verifica cache se disponível
-        if cache_manager:
+        if False:  # cache_manager:
             cached_response = cache_manager.get_cached_response(user_input)
             if cached_response:
                 logging.info(f"[CACHE] Retornando resposta do cache")

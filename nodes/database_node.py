@@ -206,16 +206,59 @@ async def get_database_sample_node(state: Dict[str, Any]) -> Dict[str, Any]:
         connection_type = state.get("connection_type", "csv")
 
         if connection_type == "postgresql":
-            # Para PostgreSQL, sempre usa uma tabela com dados para amostra
-            # Independente do modo, a amostra é só para contexto
-            table_name = "users"  # Tabela que sabemos que tem dados
-            logging.info(f"[DATABASE] PostgreSQL - usando tabela 'users' para amostra")
+            # Para PostgreSQL, detecta dinamicamente a primeira tabela disponível com dados
+            import sqlalchemy as sa
+
+            try:
+                with engine.connect() as conn:
+                    # Obtém lista de tabelas disponíveis
+                    tables_result = conn.execute(sa.text("""
+                        SELECT table_name
+                        FROM information_schema.tables
+                        WHERE table_schema = 'public'
+                        ORDER BY table_name
+                    """))
+                    available_tables = [row[0] for row in tables_result.fetchall()]
+
+                    if not available_tables:
+                        raise ValueError("Nenhuma tabela encontrada no banco PostgreSQL")
+
+                    # Tenta encontrar uma tabela com dados
+                    table_name = None
+                    for table in available_tables:
+                        try:
+                            # Verifica se a tabela tem dados
+                            count_result = conn.execute(sa.text(f"SELECT COUNT(*) FROM {table} LIMIT 1"))
+                            count = count_result.scalar()
+                            if count > 0:
+                                table_name = table
+                                logging.info(f"[DATABASE] PostgreSQL - usando tabela '{table_name}' para amostra ({count} registros)")
+                                break
+                        except Exception as e:
+                            logging.warning(f"[DATABASE] Erro ao verificar tabela {table}: {e}")
+                            continue
+
+                    # Se nenhuma tabela tem dados, usa a primeira disponível
+                    if not table_name:
+                        table_name = available_tables[0]
+                        logging.info(f"[DATABASE] PostgreSQL - usando primeira tabela '{table_name}' (sem dados detectados)")
+
+            except Exception as e:
+                logging.error(f"[DATABASE] Erro ao detectar tabelas PostgreSQL: {e}")
+                raise ValueError(f"Erro ao acessar tabelas PostgreSQL: {e}")
+
         else:
             table_name = "tabela"  # Padrão para CSV
             logging.info(f"[DATABASE] CSV - usando tabela padrão: {table_name}")
 
         # Obtém amostra dos dados
-        sample_df = pd.read_sql_query(f"SELECT * FROM {table_name} LIMIT 10", engine)
+        try:
+            sample_df = pd.read_sql_query(f"SELECT * FROM {table_name} LIMIT 10", engine)
+            logging.info(f"[DATABASE] Amostra obtida da tabela '{table_name}': {sample_df.shape[0]} registros")
+        except Exception as e:
+            logging.error(f"[DATABASE] Erro ao obter amostra da tabela '{table_name}': {e}")
+            # Se falhar, cria DataFrame vazio para não quebrar o fluxo
+            sample_df = pd.DataFrame()
         
         # Converte para formato serializável
         db_sample_dict = {

@@ -88,6 +88,3 @@ def validate_database(engine) -> bool:
         logging.error(f"Erro na validação do banco: {e}")
         return False
 
-# FUNÇÃO REMOVIDA: async_create_engine_and_load_db
-# Esta função foi removida junto com create_engine_and_load_db
-# Use a nova arquitetura de nós: csv_processing_node.py + database_node.py
