@@ -620,29 +620,38 @@ class TestManager {
                 <div class="modal-dialog modal-lg">
                     <div class="modal-content">
                         <div class="modal-header">
-                            <h5 class="modal-title">Detalhes do Teste - Grupo ${result.group_id}, Iteração ${result.iteration}</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            <h5 class="modal-title">
+                                <i class="fas fa-chart-bar"></i>
+                                Detalhes do Teste - Grupo ${result.group_id}, Iteração ${result.iteration}
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
                         </div>
                         <div class="modal-body">
-                            <h6>Configuração</h6>
-                            <p><strong>Modelo SQL:</strong> ${result.sql_model}<br>
-                            <strong>Processing Agent:</strong> ${result.processing_enabled ? result.processing_model : 'Desativado'}<br>
-                            <strong>Tempo de Execução:</strong> ${result.execution_time}s</p>
-                            
-                            <h6>Query SQL</h6>
-                            <pre class="bg-light p-2"><code>${result.sql_query || 'N/A'}</code></pre>
-                            
-                            <h6>Resposta</h6>
-                            <div class="bg-light p-2" style="max-height: 200px; overflow-y: auto;">
-                                ${result.response || 'N/A'}
-                            </div>
-                            
-                            <h6>Validação</h6>
-                            <p><strong>Válida:</strong> ${validation.valid ? 'Sim' : 'Não'}<br>
-                            <strong>Pontuação:</strong> ${validation.score || 0}<br>
-                            <strong>Razão:</strong> ${validation.reason || 'N/A'}</p>
-                            
-                            ${result.error ? `<h6>Erro</h6><div class="alert alert-danger">${result.error}</div>` : ''}
+                            <h6><i class="fas fa-cog"></i> Configuração</h6>
+                            <p>
+                                <strong>Modelo SQL:</strong> ${result.sql_model}<br>
+                                <strong>Processing Agent:</strong> ${result.processing_enabled ? result.processing_model : 'Desativado'}<br>
+                                <strong>Tempo de Execução:</strong> ${result.execution_time}s<br>
+                                <strong>Status:</strong> <span class="badge ${this.getStatusBadgeClass(result.status)}">${result.status}</span>
+                            </p>
+
+                            <h6><i class="fas fa-database"></i> Query SQL</h6>
+                            <div class="modal-code-block">${result.sql_query || 'N/A'}</div>
+
+                            <h6><i class="fas fa-reply"></i> Resposta</h6>
+                            <div class="modal-response-block">${result.response || 'N/A'}</div>
+
+                            <h6><i class="fas fa-check-circle"></i> Validação</h6>
+                            <p>
+                                <strong>Válida:</strong> <span class="${validation.valid ? 'text-success' : 'text-danger'}">${validation.valid ? 'Sim' : 'Não'}</span><br>
+                                <strong>Pontuação:</strong> ${validation.score || 0}<br>
+                                <strong>Razão:</strong> ${validation.reason || 'N/A'}
+                            </p>
+
+                            ${result.error ? `
+                                <h6><i class="fas fa-exclamation-triangle"></i> Erro</h6>
+                                <div class="alert alert-danger">${result.error}</div>
+                            ` : ''}
                         </div>
                     </div>
                 </div>
@@ -662,7 +671,25 @@ class TestManager {
         const modalElement = new bootstrap.Modal(document.getElementById('resultModal'));
         modalElement.show();
     }
-    
+
+    getStatusBadgeClass(status) {
+        switch(status?.toLowerCase()) {
+            case 'sucesso':
+            case 'success':
+                return 'bg-success';
+            case 'erro':
+            case 'error':
+                return 'bg-danger';
+            case 'cancelado':
+            case 'cancelled':
+                return 'bg-warning';
+            case 'timeout':
+                return 'bg-secondary';
+            default:
+                return 'bg-primary';
+        }
+    }
+
     async downloadCsv() {
         try {
             const response = await fetch('/api/download_csv');
@@ -672,7 +699,7 @@ class TestManager {
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `teste_agentgraph_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.xlsx`;
+                a.download = `teste_agentgraph_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.csv`;
                 document.body.appendChild(a);
                 a.click();
                 window.URL.revokeObjectURL(url);

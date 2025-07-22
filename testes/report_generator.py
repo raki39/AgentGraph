@@ -30,67 +30,60 @@ class ReportGenerator:
     
     def generate_csv_report(self, results: Dict[str, Any]) -> str:
         """
-        Gera relatório completo em CSV/Excel
+        Gera relatório completo em CSV único com todas as seções
 
         Args:
             results: Resultados dos testes
 
         Returns:
-            Caminho do arquivo Excel gerado
+            Caminho do arquivo CSV gerado
         """
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            # Corrige caminhos para Windows
-            excel_filename = f"relatorio_testes_{timestamp}.xlsx"
-            excel_path = os.path.join(self.output_dir, excel_filename)
-            excel_path = os.path.normpath(excel_path)  # Normaliza barras
+            # Gera CSV único
+            csv_filename = f"relatorio_testes_{timestamp}.csv"
+            csv_path = os.path.join(self.output_dir, csv_filename)
+            csv_path = os.path.normpath(csv_path)
 
-            print(f"📊 Gerando relatório Excel: {excel_path}")
+            print(f"📊 Gerando relatório CSV único: {csv_path}")
 
-            # Cria Excel com múltiplas abas
-            with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+            # Cria DataFrames das seções
+            group_summary_df = self._create_group_summary_dataframe(results)
+            individual_df = self._create_individual_results_dataframe(results)
+            general_summary_df = self._create_general_summary_dataframe(results)
 
-                # Aba 1: Resumo por Grupo
-                group_summary_df = self._create_group_summary_dataframe(results)
-                if not group_summary_df.empty:
-                    group_summary_df.to_excel(writer, sheet_name='Resumo_Grupos', index=False)
-                    print(f"✅ Aba 'Resumo_Grupos' criada com {len(group_summary_df)} linhas")
-
-                # Aba 2: Resultados Individuais
-                individual_df = self._create_individual_results_dataframe(results)
-                if not individual_df.empty:
-                    individual_df.to_excel(writer, sheet_name='Resultados_Individuais', index=False)
-                    print(f"✅ Aba 'Resultados_Individuais' criada com {len(individual_df)} linhas")
-
-                # Aba 3: Resumo Geral
-                general_summary_df = self._create_general_summary_dataframe(results)
+            # Combina tudo em um CSV único com separadores de seção
+            with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
+                # Seção 1: Resumo Geral
+                f.write("=== RESUMO GERAL ===\n")
                 if not general_summary_df.empty:
-                    general_summary_df.to_excel(writer, sheet_name='Resumo_Geral', index=False)
-                    print(f"✅ Aba 'Resumo_Geral' criada com {len(general_summary_df)} linhas")
+                    general_summary_df.to_csv(f, index=False, sep=';', line_terminator='\n')
+                else:
+                    f.write("Nenhum dado disponível\n")
 
-            # Também gera CSVs separados com separador correto
-            csv_dir = os.path.join(self.output_dir, f"csv_{timestamp}")
-            os.makedirs(csv_dir, exist_ok=True)
+                f.write("\n\n")
 
-            if not group_summary_df.empty:
-                csv_grupos = os.path.join(csv_dir, "resumo_grupos.csv")
-                group_summary_df.to_csv(csv_grupos, index=False, encoding='utf-8-sig', sep=';')
-                print(f"✅ CSV grupos: {csv_grupos}")
+                # Seção 2: Resumo por Grupos
+                f.write("=== RESUMO POR GRUPOS ===\n")
+                if not group_summary_df.empty:
+                    group_summary_df.to_csv(f, index=False, sep=';', line_terminator='\n')
+                else:
+                    f.write("Nenhum dado disponível\n")
 
-            if not individual_df.empty:
-                csv_individual = os.path.join(csv_dir, "resultados_individuais.csv")
-                individual_df.to_csv(csv_individual, index=False, encoding='utf-8-sig', sep=';')
-                print(f"✅ CSV individual: {csv_individual}")
+                f.write("\n\n")
 
-            if not general_summary_df.empty:
-                csv_geral = os.path.join(csv_dir, "resumo_geral.csv")
-                general_summary_df.to_csv(csv_geral, index=False, encoding='utf-8-sig', sep=';')
-                print(f"✅ CSV geral: {csv_geral}")
+                # Seção 3: Resultados Individuais
+                f.write("=== RESULTADOS INDIVIDUAIS ===\n")
+                if not individual_df.empty:
+                    individual_df.to_csv(f, index=False, sep=';', line_terminator='\n')
+                else:
+                    f.write("Nenhum dado disponível\n")
 
-            print(f"🎉 Relatório completo gerado: {excel_path}")
-            logging.info(f"Relatório gerado: {excel_path}")
-            return excel_path
+            print(f"🎉 Relatório CSV único gerado: {csv_path}")
+            print(f"✅ Seções incluídas: Resumo Geral, Resumo por Grupos, Resultados Individuais")
+            logging.info(f"Relatório CSV gerado: {csv_path}")
+            return csv_path
 
         except Exception as e:
             print(f"❌ Erro ao gerar relatório: {e}")

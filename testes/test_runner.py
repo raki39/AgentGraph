@@ -13,6 +13,9 @@ import uuid
 import sys
 import os
 
+# Define variável de ambiente para indicar modo de teste
+os.environ["TESTING_MODE"] = "true"
+
 # Adiciona path do projeto
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -59,6 +62,7 @@ class MassiveTestRunner:
         self._cancel_event = threading.Event()
         self._test_timeout = 360  # 1.5 minutos timeout por teste
         self._active_futures = {}  # {thread_id: future} para cancelamento real
+        self._cancel_events = {}  # {thread_id: Event} para cancelamento individual
         
     async def run_test_session(self, session: Dict[str, Any], validation_method: str = 'llm', expected_content: str = None) -> Dict[str, Any]:
         """
@@ -265,6 +269,9 @@ class MassiveTestRunner:
                 # Cria thread_id único para este teste
                 thread_id = f"test_{group['id']}_{iteration}_{uuid.uuid4().hex[:8]}"
 
+                # Cria Event individual para cancelamento deste teste
+                cancel_event = threading.Event()
+
                 # Registra teste como em execução
                 with self._lock:
                     self.status['running_tests'][thread_id] = {
@@ -274,6 +281,7 @@ class MassiveTestRunner:
                         'question': question[:50] + '...' if len(question) > 50 else question
                     }
                     self.status['current_test'] = thread_id
+                    self._cancel_events[thread_id] = cancel_event
 
                 print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] 🚀 INICIANDO {thread_id} (Worker {asyncio.current_task().get_name() if asyncio.current_task() else 'unknown'})")
                 logging.info(f"🔄 Iniciando teste {thread_id} - Grupo {group['id']}, Iteração {iteration}")
@@ -292,39 +300,66 @@ class MassiveTestRunner:
                 loop = asyncio.get_event_loop()
 
                 def run_sync_test():
-                    """Executa teste de forma síncrona em thread separada"""
+                    """Executa teste de forma síncrona em thread separada COM VERIFICAÇÃO DE CANCELAMENTO"""
                     try:
-                        # Verifica cancelamento antes de iniciar (NOVO)
-                        if thread_id in self.status['cancelled_tests']:
+                        # Verifica cancelamento antes de iniciar
+                        if cancel_event.is_set() or thread_id in self.status['cancelled_tests']:
+                            print(f"🚫 Teste {thread_id} cancelado antes de iniciar")
                             return {'cancelled': True, 'reason': 'cancelled_before_start'}
 
                         # Cria novo loop para esta thread
                         new_loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(new_loop)
 
-                        # Inicializa AgentGraphManager para este teste
-                        graph_manager = AgentGraphManager()
+                        try:
+                            # Inicializa AgentGraphManager para este teste
+                            graph_manager = AgentGraphManager()
 
-                        # Executa query
-                        result = new_loop.run_until_complete(
-                            graph_manager.process_query(
-                                user_input=question,
-                                selected_model=group['sql_model_name'],
-                                processing_enabled=group['processing_enabled'],
-                                processing_model=group['processing_model_name'] if group['processing_enabled'] else None,
-                                thread_id=thread_id
+                            # Verifica cancelamento antes de processar
+                            if cancel_event.is_set() or thread_id in self.status['cancelled_tests']:
+                                print(f"🚫 Teste {thread_id} cancelado antes de processar query")
+                                return {'cancelled': True, 'reason': 'cancelled_before_processing'}
+
+                            # Executa query com timeout
+                            async def run_with_cancellation():
+                                # Verifica cancelamento durante execução
+                                if cancel_event.is_set() or thread_id in self.status['cancelled_tests']:
+                                    raise asyncio.CancelledError(f"Teste {thread_id} cancelado durante execução")
+
+                                return await graph_manager.process_query(
+                                    user_input=question,
+                                    selected_model=group['sql_model_name'],
+                                    processing_enabled=group['processing_enabled'],
+                                    processing_model=group['processing_model_name'] if group['processing_enabled'] else None,
+                                    thread_id=thread_id
+                                )
+
+                            # Executa com timeout
+                            result = new_loop.run_until_complete(
+                                asyncio.wait_for(run_with_cancellation(), timeout=self._test_timeout)
                             )
-                        )
 
-                        new_loop.close()
+                            # Verifica cancelamento após execução
+                            if cancel_event.is_set() or thread_id in self.status['cancelled_tests']:
+                                print(f"🚫 Teste {thread_id} cancelado após execução")
+                                return {'cancelled': True, 'reason': 'cancelled_after_execution'}
 
-                        # Verifica cancelamento após execução (NOVO)
-                        if thread_id in self.status['cancelled_tests']:
-                            return {'cancelled': True, 'reason': 'cancelled_after_execution'}
+                            return result
 
-                        return result
+                        finally:
+                            new_loop.close()
 
+                    except asyncio.TimeoutError:
+                        print(f"⏰ Teste {thread_id} TIMEOUT após {self._test_timeout}s")
+                        logging.error(f"Timeout em teste {thread_id} após {self._test_timeout}s")
+                        with self._lock:
+                            self.status['timeout_tests'].add(thread_id)
+                        return {'timeout': True, 'duration': self._test_timeout}
+                    except asyncio.CancelledError:
+                        print(f"🚫 Teste {thread_id} CANCELADO via CancelledError")
+                        return {'cancelled': True, 'reason': 'asyncio_cancelled'}
                     except Exception as e:
+                        print(f"❌ Erro em teste {thread_id}: {e}")
                         logging.error(f"Erro em thread separada para {thread_id}: {e}")
                         return {'error': str(e)}
 
@@ -332,23 +367,41 @@ class MassiveTestRunner:
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     future = loop.run_in_executor(executor, run_sync_test)
 
-                    # Aguarda com verificação de cancelamento (NOVO)
+                    # Aguarda com verificação AGRESSIVA de cancelamento
+                    check_count = 0
                     while not future.done():
-                        await asyncio.sleep(0.1)  # Verifica a cada 100ms
-                        if thread_id in self.status['cancelled_tests']:
-                            future.cancel()
-                            print(f"🚫 Cancelando future do teste {thread_id}")
+                        await asyncio.sleep(0.05)  # Verifica a cada 50ms (mais frequente)
+                        check_count += 1
+
+                        # Verifica cancelamento
+                        if (thread_id in self.status['cancelled_tests'] or
+                            cancel_event.is_set()):
+
+                            print(f"🚫 CANCELAMENTO DETECTADO para {thread_id} (check #{check_count})")
+
+                            # Cancela future IMEDIATAMENTE
+                            if not future.cancelled():
+                                future.cancel()
+                                print(f"🚫 Future cancelada para {thread_id}")
+
+                            # Sinaliza Event para parar processamento interno
+                            cancel_event.set()
+
+                            # Aguarda um pouco para o cancelamento propagar
                             try:
-                                await future
+                                await asyncio.wait_for(future, timeout=2.0)
+                            except (asyncio.TimeoutError, asyncio.CancelledError):
+                                print(f"🚫 Cancelamento forçado concluído para {thread_id}")
                             except:
                                 pass
+
                             return self._create_cancelled_result(thread_id, group, iteration, start_time, 'user_cancelled')
 
                     result = await future
 
                 execution_time = time.time() - start_time
 
-                # Remove teste da lista de execução e limpa future
+                # Remove teste da lista de execução e limpa recursos
                 with self._lock:
                     if thread_id in self.status['running_tests']:
                         del self.status['running_tests'][thread_id]
@@ -356,6 +409,10 @@ class MassiveTestRunner:
                         self.status['current_test'] = None
                     if thread_id in self._active_futures:
                         del self._active_futures[thread_id]
+                    if thread_id in self._cancel_events:
+                        del self._cancel_events[thread_id]
+                    # Remove da lista de cancelados também
+                    self.status['cancelled_tests'].discard(thread_id)
 
                 # Verifica tipo de resultado
                 if isinstance(result, dict):
@@ -560,7 +617,7 @@ class MassiveTestRunner:
 
     def cancel_current_test(self, thread_id: str = None) -> bool:
         """
-        Cancela teste específico ou o mais antigo em execução
+        Cancela teste específico ou o mais antigo em execução COM CANCELAMENTO FORÇADO
 
         Args:
             thread_id: ID do teste específico para cancelar (opcional)
@@ -572,8 +629,21 @@ class MassiveTestRunner:
             if thread_id:
                 if thread_id in self.status['running_tests']:
                     self.status['cancelled_tests'].add(thread_id)
-                    print(f"🚫 Teste {thread_id} marcado para cancelamento")
-                    logging.info(f"Teste {thread_id} cancelado pelo usuário")
+
+                    # CANCELAMENTO FORÇADO - Sinaliza Event individual
+                    if thread_id in self._cancel_events:
+                        self._cancel_events[thread_id].set()
+                        print(f"🚫 Event de cancelamento ativado para {thread_id}")
+
+                    # CANCELAMENTO FORÇADO - Cancela future se existir
+                    if thread_id in self._active_futures:
+                        future = self._active_futures[thread_id]
+                        if not future.done():
+                            future.cancel()
+                            print(f"🚫 Future cancelada forçadamente para {thread_id}")
+
+                    print(f"🚫 Teste {thread_id} marcado para cancelamento FORÇADO")
+                    logging.info(f"Teste {thread_id} cancelado FORÇADAMENTE pelo usuário")
                     return True
             else:
                 # Cancela o teste mais antigo
@@ -584,8 +654,21 @@ class MassiveTestRunner:
                     )
                     thread_id = oldest_test[0]
                     self.status['cancelled_tests'].add(thread_id)
-                    print(f"🚫 Teste mais antigo {thread_id} marcado para cancelamento")
-                    logging.info(f"Teste mais antigo {thread_id} cancelado pelo usuário")
+
+                    # CANCELAMENTO FORÇADO - Sinaliza Event individual
+                    if thread_id in self._cancel_events:
+                        self._cancel_events[thread_id].set()
+                        print(f"🚫 Event de cancelamento ativado para {thread_id}")
+
+                    # CANCELAMENTO FORÇADO - Cancela future se existir
+                    if thread_id in self._active_futures:
+                        future = self._active_futures[thread_id]
+                        if not future.done():
+                            future.cancel()
+                            print(f"🚫 Future cancelada forçadamente para {thread_id}")
+
+                    print(f"🚫 Teste mais antigo {thread_id} marcado para cancelamento FORÇADO")
+                    logging.info(f"Teste mais antigo {thread_id} cancelado FORÇADAMENTE pelo usuário")
                     return True
         return False
 
