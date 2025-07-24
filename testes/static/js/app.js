@@ -581,20 +581,27 @@ class TestManager {
         const individualContent = document.getElementById('individualContent');
         
         let html = '<div class="table-responsive"><table class="table table-sm"><thead><tr>';
-        html += '<th>Grupo</th><th>Iter.</th><th>Modelo</th><th>Sucesso</th><th>Validação</th><th>Tempo</th><th>Ações</th>';
+        html += '<th>Grupo</th><th>Iter.</th><th>Modelo SQL</th><th>Processing</th><th>Sucesso</th><th>Validação</th><th>Tempo</th><th>Ações</th>';
         html += '</tr></thead><tbody>';
-        
+
         individualResults.slice(0, 100).forEach((result, index) => { // Limita a 100 para performance
             const validation = result.validation || {};
+            const processingBadge = result.processing_enabled
+                ? `<span class="badge bg-info" title="${result.processing_model || 'N/A'}">Sim</span>`
+                : '<span class="badge bg-secondary">Não</span>';
+
             html += `
                 <tr>
-                    <td>${result.group_id}</td>
+                    <td><strong>${result.group_id}</strong></td>
                     <td>${result.iteration}</td>
-                    <td><small>${result.sql_model}</small></td>
+                    <td><small class="text-primary">${result.sql_model}</small></td>
+                    <td>${processingBadge}</td>
                     <td><span class="badge bg-${result.success ? 'success' : 'danger'}">${result.success ? 'Sim' : 'Não'}</span></td>
-                    <td><span class="badge bg-${validation.valid ? 'success' : 'danger'}">${validation.score || 0}</span></td>
-                    <td>${result.execution_time}s</td>
-                    <td><button class="btn btn-sm btn-outline-info" onclick="testManager.showResultDetails(${index})">Ver</button></td>
+                    <td><span class="badge bg-${validation.valid ? 'success' : 'danger'}">${validation.score || 0}%</span></td>
+                    <td><small>${result.execution_time}s</small></td>
+                    <td><button class="btn btn-sm btn-outline-primary" onclick="testManager.showResultDetails(${index})">
+                        <i class="fas fa-eye"></i> Detalhes
+                    </button></td>
                 </tr>
             `;
         });
@@ -617,41 +624,115 @@ class TestManager {
         
         const modal = `
             <div class="modal fade" id="resultModal" tabindex="-1">
-                <div class="modal-dialog modal-lg">
+                <div class="modal-dialog modal-xl">
                     <div class="modal-content">
                         <div class="modal-header">
                             <h5 class="modal-title">
-                                <i class="fas fa-chart-bar"></i>
-                                Detalhes do Teste - Grupo ${result.group_id}, Iteração ${result.iteration}
+                                <i class="fas fa-microscope"></i>
+                                Análise Detalhada - Grupo ${result.group_id}, Iteração ${result.iteration}
                             </h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
                         </div>
                         <div class="modal-body">
-                            <h6><i class="fas fa-cog"></i> Configuração</h6>
-                            <p>
-                                <strong>Modelo SQL:</strong> ${result.sql_model}<br>
-                                <strong>Processing Agent:</strong> ${result.processing_enabled ? result.processing_model : 'Desativado'}<br>
-                                <strong>Tempo de Execução:</strong> ${result.execution_time}s<br>
-                                <strong>Status:</strong> <span class="badge ${this.getStatusBadgeClass(result.status)}">${result.status}</span>
-                            </p>
+                            <!-- Configuração em Cards -->
+                            <div class="row mb-4">
+                                <div class="col-md-6">
+                                    <div class="card h-100">
+                                        <div class="card-header">
+                                            <h6 class="mb-0"><i class="fas fa-cog"></i> Configuração do Teste</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row">
+                                                <div class="col-6">
+                                                    <small class="text-muted">Modelo SQL</small>
+                                                    <div class="fw-bold text-primary">${result.sql_model}</div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <small class="text-muted">Processing Agent</small>
+                                                    <div class="fw-bold ${result.processing_enabled ? 'text-info' : 'text-secondary'}">
+                                                        ${result.processing_enabled ? result.processing_model : 'Desativado'}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <hr class="my-2">
+                                            <div class="row">
+                                                <div class="col-6">
+                                                    <small class="text-muted">Tempo de Execução</small>
+                                                    <div class="fw-bold">${result.execution_time}s</div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <small class="text-muted">Status</small>
+                                                    <div><span class="badge ${this.getStatusBadgeClass(result.status)}">${result.status || 'Concluído'}</span></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="card h-100">
+                                        <div class="card-header">
+                                            <h6 class="mb-0"><i class="fas fa-check-circle"></i> Resultado da Validação</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="text-center mb-3">
+                                                <div class="display-6 fw-bold ${validation.valid ? 'text-success' : 'text-danger'}">
+                                                    ${validation.score || 0}%
+                                                </div>
+                                                <small class="text-muted">Pontuação de Validação</small>
+                                            </div>
+                                            <div class="text-center">
+                                                <span class="badge ${validation.valid ? 'bg-success' : 'bg-danger'} fs-6">
+                                                    ${validation.valid ? '✓ Válida' : '✗ Inválida'}
+                                                </span>
+                                            </div>
+                                            ${validation.reason ? `
+                                                <hr class="my-2">
+                                                <small class="text-muted">Razão:</small>
+                                                <div class="small">${validation.reason}</div>
+                                            ` : ''}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
 
-                            <h6><i class="fas fa-database"></i> Query SQL</h6>
-                            <div class="modal-code-block">${result.sql_query || 'N/A'}</div>
+                            <!-- Query SQL -->
+                            <div class="card mb-3">
+                                <div class="card-header">
+                                    <h6 class="mb-0"><i class="fas fa-database"></i> Query SQL Gerada</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="modal-code-block">${this.formatSqlQuery(result.sql_query) || '<em class="text-muted">Nenhuma query SQL gerada</em>'}</div>
+                                </div>
+                            </div>
 
-                            <h6><i class="fas fa-reply"></i> Resposta</h6>
-                            <div class="modal-response-block">${result.response || 'N/A'}</div>
-
-                            <h6><i class="fas fa-check-circle"></i> Validação</h6>
-                            <p>
-                                <strong>Válida:</strong> <span class="${validation.valid ? 'text-success' : 'text-danger'}">${validation.valid ? 'Sim' : 'Não'}</span><br>
-                                <strong>Pontuação:</strong> ${validation.score || 0}<br>
-                                <strong>Razão:</strong> ${validation.reason || 'N/A'}
-                            </p>
+                            <!-- Resposta -->
+                            <div class="card mb-3">
+                                <div class="card-header">
+                                    <h6 class="mb-0"><i class="fas fa-reply"></i> Resposta do Sistema</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="modal-response-block">${this.formatResponse(result.response) || '<em class="text-muted">Nenhuma resposta gerada</em>'}</div>
+                                </div>
+                            </div>
 
                             ${result.error ? `
-                                <h6><i class="fas fa-exclamation-triangle"></i> Erro</h6>
-                                <div class="alert alert-danger">${result.error}</div>
+                                <div class="card border-danger">
+                                    <div class="card-header bg-danger text-white">
+                                        <h6 class="mb-0"><i class="fas fa-exclamation-triangle"></i> Erro Detectado</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="alert alert-danger mb-0">${result.error}</div>
+                                    </div>
+                                </div>
                             ` : ''}
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                                <i class="fas fa-times"></i> Fechar
+                            </button>
+                            <button type="button" class="btn btn-primary" onclick="testManager.copyTestDetails(${JSON.stringify(result).replace(/"/g, '&quot;')})">
+                                <i class="fas fa-copy"></i> Copiar Detalhes
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -688,6 +769,72 @@ class TestManager {
             default:
                 return 'bg-primary';
         }
+    }
+
+    formatSqlQuery(query) {
+        if (!query) return null;
+
+        // Remove espaços extras e formata SQL básico
+        return query
+            .replace(/\s+/g, ' ')
+            .replace(/SELECT/gi, 'SELECT')
+            .replace(/FROM/gi, '\nFROM')
+            .replace(/WHERE/gi, '\nWHERE')
+            .replace(/GROUP BY/gi, '\nGROUP BY')
+            .replace(/ORDER BY/gi, '\nORDER BY')
+            .replace(/HAVING/gi, '\nHAVING')
+            .replace(/LIMIT/gi, '\nLIMIT')
+            .trim();
+    }
+
+    formatResponse(response) {
+        if (!response) return null;
+
+        // Se for um número simples, formata melhor
+        if (/^\d+$/.test(response.trim())) {
+            return `<span class="display-6 text-primary fw-bold">${response}</span>`;
+        }
+
+        // Se for JSON, tenta formatar
+        try {
+            const parsed = JSON.parse(response);
+            return `<pre class="json-formatted">${JSON.stringify(parsed, null, 2)}</pre>`;
+        } catch (e) {
+            // Retorna como texto normal
+            return response;
+        }
+    }
+
+    copyTestDetails(result) {
+        const details = `
+DETALHES DO TESTE
+================
+Grupo: ${result.group_id}
+Iteração: ${result.iteration}
+Modelo SQL: ${result.sql_model}
+Processing Agent: ${result.processing_enabled ? result.processing_model : 'Desativado'}
+Tempo: ${result.execution_time}s
+Status: ${result.status || 'Concluído'}
+
+QUERY SQL:
+${result.sql_query || 'N/A'}
+
+RESPOSTA:
+${result.response || 'N/A'}
+
+VALIDAÇÃO:
+Válida: ${result.validation?.valid ? 'Sim' : 'Não'}
+Pontuação: ${result.validation?.score || 0}%
+Razão: ${result.validation?.reason || 'N/A'}
+
+${result.error ? `ERRO:\n${result.error}` : ''}
+        `.trim();
+
+        navigator.clipboard.writeText(details).then(() => {
+            this.showAlert('Detalhes copiados para a área de transferência!', 'success');
+        }).catch(() => {
+            this.showAlert('Erro ao copiar detalhes', 'danger');
+        });
     }
 
     async downloadCsv() {

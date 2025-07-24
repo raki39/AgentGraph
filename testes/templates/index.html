@@ -112,7 +112,16 @@
         .main-content {
             background: var(--bg-dark);
             min-height: 100vh;
-            padding: 1.5rem;
+            padding: 2rem;
+        }
+
+        /* Container spacing */
+        .content-section {
+            margin-bottom: 2rem;
+        }
+
+        .content-section:last-child {
+            margin-bottom: 0;
         }
 
         /* Header Dashboard */
@@ -145,32 +154,35 @@
             background: var(--bg-card);
             border: 1px solid var(--border-color);
             border-radius: var(--border-radius);
-            padding: 1rem;
-            margin: 0.5rem 0;
+            padding: 1.5rem 1rem;
+            margin: 0.75rem 0;
             box-shadow: var(--shadow-sm);
             transition: all 0.2s ease;
             position: relative;
+            text-align: center;
         }
 
         .metric-card:hover {
             background: var(--bg-card-hover);
             border-color: var(--primary-blue);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
         }
 
         .metric-value {
-            font-size: 1.75rem;
+            font-size: 2rem;
             font-weight: 700;
             line-height: 1;
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.5rem;
             color: var(--primary-blue);
         }
 
         .metric-label {
             font-size: 0.75rem;
-            font-weight: 500;
+            font-weight: 600;
             color: var(--text-secondary);
             text-transform: uppercase;
-            letter-spacing: 0.05em;
+            letter-spacing: 0.1em;
         }
 
         .test-group-card {
@@ -379,6 +391,19 @@
             border: none;
             padding: 0.75rem;
             border-bottom: 1px solid var(--border-color);
+            color: var(--text-primary) !important;
+        }
+
+        .table tbody tr {
+            color: var(--text-primary) !important;
+        }
+
+        .table tbody tr td {
+            color: var(--text-primary) !important;
+        }
+
+        .table tbody tr td * {
+            color: var(--text-primary) !important;
         }
 
         /* Ícones */
@@ -599,6 +624,58 @@
             border-radius: var(--border-radius) !important;
         }
 
+        /* Modal XL específico */
+        .modal-xl {
+            max-width: 90vw !important;
+        }
+
+        /* Cards dentro do modal */
+        .modal-body .card {
+            background: var(--bg-darker) !important;
+            border: 1px solid var(--border-color) !important;
+        }
+
+        .modal-body .card-header {
+            background: var(--bg-card) !important;
+            border-bottom: 1px solid var(--border-color) !important;
+            padding: 0.75rem 1rem !important;
+        }
+
+        .modal-body .card-body {
+            background: var(--bg-darker) !important;
+            padding: 1rem !important;
+        }
+
+        /* Formatação especial para números grandes */
+        .display-6 {
+            font-size: 2.5rem !important;
+            font-weight: 700 !important;
+        }
+
+        /* JSON formatado */
+        .json-formatted {
+            background: var(--bg-card) !important;
+            border: 1px solid var(--border-color) !important;
+            border-radius: var(--border-radius) !important;
+            padding: 1rem !important;
+            color: var(--text-primary) !important;
+            font-size: 0.8rem !important;
+            max-height: 200px !important;
+            overflow-y: auto !important;
+        }
+
+        /* Melhor espaçamento para small text */
+        .modal-body small {
+            display: block !important;
+            margin-bottom: 0.25rem !important;
+        }
+
+        /* Separadores horizontais */
+        .modal-body hr {
+            border-color: var(--border-color) !important;
+            margin: 0.75rem 0 !important;
+        }
+
         /* Scrollbar personalizada */
         ::-webkit-scrollbar {
             width: 6px;
@@ -620,20 +697,24 @@
 </head>
 <body>
     <div class="container-fluid">
-        <div class="row">
+        <div class="row g-0">
             <!-- Sidebar -->
             <div class="col-md-3 sidebar">
-                <h4><i class="fas fa-flask"></i> Sistema de Testes</h4>
-                
-                <!-- Configuração da Pergunta -->
-                <div class="mb-4">
-                    <h6><i class="fas fa-question-circle"></i> Pergunta do Teste</h6>
-                    <textarea id="testQuestion" class="form-control" rows="3" 
-                              placeholder="Digite a pergunta que será testada..."></textarea>
-                    <button id="createSession" class="btn btn-primary btn-sm mt-2 w-100">
-                        <i class="fas fa-plus"></i> Criar Sessão
-                    </button>
-                </div>
+                <div class="p-3">
+                    <div class="dashboard-header mb-4">
+                        <h4 class="mb-2"><i class="fas fa-flask"></i> Sistema de Testes</h4>
+                        <p class="text-muted small mb-0">Testes massivos para AgentGraph</p>
+                    </div>
+
+                    <!-- Configuração da Pergunta -->
+                    <div class="content-section">
+                        <h6 class="mb-3"><i class="fas fa-question-circle"></i> Pergunta do Teste</h6>
+                        <textarea id="testQuestion" class="form-control" rows="3"
+                                  placeholder="Digite a pergunta que será testada...">Quantos usuários temos na tabela?</textarea>
+                        <button id="createSession" class="btn btn-primary btn-sm mt-2 w-100">
+                            <i class="fas fa-plus"></i> Criar Sessão
+                        </button>
+                    </div>
 
                 <!-- Configuração de Grupo -->
                 <div id="groupConfig" style="display: none;">
@@ -700,15 +781,26 @@
                         <i class="fas fa-play"></i> Executar Testes
                     </button>
                 </div>
+                </div>
             </div>
 
             <!-- Main Content -->
             <div class="col-md-9 main-content">
-                <div class="dashboard-header">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <h2><i class="fas fa-chart-line"></i> Dashboard de Testes</h2>
-                        <div id="sessionStatus" class="status-badge status-idle">
-                            <i class="fas fa-circle"></i> Aguardando
+                <div class="content-section">
+                    <div class="dashboard-header">
+                        <div class="d-flex justify-content-between align-items-center mb-4">
+                            <div>
+                                <h2 class="mb-1"><i class="fas fa-chart-line"></i> Dashboard de Testes</h2>
+                                <p class="text-muted mb-0">Monitoramento em tempo real dos testes massivos</p>
+                            </div>
+                            <div class="d-flex align-items-center gap-3">
+                                <div id="sessionStatus" class="status-badge status-idle">
+                                    <i class="fas fa-circle"></i> Aguardando
+                                </div>
+                                <button id="refreshDashboard" class="btn btn-outline-primary btn-sm">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

@@ -534,11 +534,12 @@ class MassiveTestRunner:
         successful_tests = sum(1 for r in results if r.get('success', False))
         valid_responses = sum(1 for r in results if r.get('validation', {}).get('valid', False))
         
-        # Calcula consistência (respostas similares)
-        responses = [r.get('response', '') for r in results if r.get('success', False)]
+        # Calcula consistência baseada na pontuação de validação (CORRIGIDO)
+        validation_scores = [r.get('validation', {}).get('score', 0) for r in results if r.get('success', False)]
         sql_queries = [r.get('sql_query', '') for r in results if r.get('success', False)]
-        
-        response_consistency = self._calculate_consistency(responses)
+
+        # Consistência baseada em pontuações similares (não texto)
+        response_consistency = self._calculate_score_consistency(validation_scores)
         sql_consistency = self._calculate_consistency(sql_queries)
         
         avg_execution_time = sum(r.get('execution_time', 0) for r in results) / total_tests
@@ -559,22 +560,71 @@ class MassiveTestRunner:
     
     def _calculate_consistency(self, items: List[str]) -> float:
         """
-        Calcula taxa de consistência entre itens
-        
+        Calcula taxa de consistência entre itens (para SQL queries)
+
         Args:
             items: Lista de strings para comparar
-            
+
         Returns:
             Taxa de consistência (0-1)
         """
         if len(items) <= 1:
             return 1.0
-        
+
         # Conta ocorrências únicas
         unique_items = set(items)
         most_common_count = max(items.count(item) for item in unique_items)
-        
+
         return most_common_count / len(items)
+
+    def _calculate_score_consistency(self, scores: List[float]) -> float:
+        """
+        Calcula consistência baseada em pontuações de validação (NOVO MÉTODO CORRETO)
+
+        Args:
+            scores: Lista de pontuações de validação (0-100)
+
+        Returns:
+            Taxa de consistência baseada em pontuações similares (0-100)
+        """
+        if len(scores) <= 1:
+            return 100.0
+
+        if not scores:
+            return 0.0
+
+        # Agrupa pontuações em faixas para considerar similares
+        # Faixas: 0-20, 21-40, 41-60, 61-80, 81-100
+        def get_score_range(score):
+            if score >= 81:
+                return "excelente"  # 81-100
+            elif score >= 61:
+                return "bom"        # 61-80
+            elif score >= 41:
+                return "regular"    # 41-60
+            elif score >= 21:
+                return "ruim"       # 21-40
+            else:
+                return "muito_ruim" # 0-20
+
+        # Agrupa por faixas
+        score_ranges = [get_score_range(score) for score in scores]
+
+        # Calcula consistência baseada na faixa mais comum
+        from collections import Counter
+        range_counts = Counter(score_ranges)
+        most_common_count = range_counts.most_common(1)[0][1]
+
+        consistency_rate = (most_common_count / len(scores)) * 100
+
+        # Garante que nunca passe de 100%
+        consistency_rate = min(consistency_rate, 100.0)
+
+        print(f"🔍 [CONSISTENCY] Pontuações: {scores}")
+        print(f"🔍 [CONSISTENCY] Faixas: {score_ranges}")
+        print(f"🔍 [CONSISTENCY] Mais comum: {most_common_count}/{len(scores)} = {consistency_rate:.1f}%")
+
+        return round(consistency_rate, 2)
     
     def _generate_summary(self):
         """Gera resumo geral dos testes"""
@@ -592,6 +642,10 @@ class MassiveTestRunner:
         avg_validation_rate = sum(gr['validation_rate'] for gr in group_results) / len(group_results)
         avg_response_consistency = sum(gr['response_consistency'] for gr in group_results) / len(group_results)
         avg_sql_consistency = sum(gr['sql_consistency'] for gr in group_results) / len(group_results)
+
+        # Garante que as médias não passem de 100%
+        avg_response_consistency = min(avg_response_consistency, 100.0)
+        avg_sql_consistency = min(avg_sql_consistency, 100.0)
         
         self.results['summary'] = {
             'total_groups': len(group_results),

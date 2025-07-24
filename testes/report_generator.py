@@ -58,7 +58,7 @@ class ReportGenerator:
                 # Seção 1: Resumo Geral
                 f.write("=== RESUMO GERAL ===\n")
                 if not general_summary_df.empty:
-                    general_summary_df.to_csv(f, index=False, sep=';', line_terminator='\n')
+                    general_summary_df.to_csv(f, index=False, sep=';', lineterminator='\n')
                 else:
                     f.write("Nenhum dado disponível\n")
 
@@ -67,7 +67,7 @@ class ReportGenerator:
                 # Seção 2: Resumo por Grupos
                 f.write("=== RESUMO POR GRUPOS ===\n")
                 if not group_summary_df.empty:
-                    group_summary_df.to_csv(f, index=False, sep=';', line_terminator='\n')
+                    group_summary_df.to_csv(f, index=False, sep=';', lineterminator='\n')
                 else:
                     f.write("Nenhum dado disponível\n")
 
@@ -76,7 +76,7 @@ class ReportGenerator:
                 # Seção 3: Resultados Individuais
                 f.write("=== RESULTADOS INDIVIDUAIS ===\n")
                 if not individual_df.empty:
-                    individual_df.to_csv(f, index=False, sep=';', line_terminator='\n')
+                    individual_df.to_csv(f, index=False, sep=';', lineterminator='\n')
                 else:
                     f.write("Nenhum dado disponível\n")
 
