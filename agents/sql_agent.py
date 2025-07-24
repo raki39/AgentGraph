@@ -128,7 +128,7 @@ async def retry_with_backoff(func, max_retries=3, base_delay=1.0):
 
 
 
-def create_sql_agent_executor(db: SQLDatabase, model_name: str = "gpt-4o-mini", single_table_mode: bool = False, selected_table: str = None):
+def create_sql_agent_executor(db: SQLDatabase, model_name: str = "gpt-4o-mini", single_table_mode: bool = False, selected_table: str = None, top_k: int = 10):
     """
     Cria um agente SQL usando LangChain com suporte a diferentes provedores
 
@@ -137,6 +137,7 @@ def create_sql_agent_executor(db: SQLDatabase, model_name: str = "gpt-4o-mini", 
         model_name: Nome do modelo a usar (OpenAI, Anthropic)
         single_table_mode: Se deve restringir a uma única tabela
         selected_table: Tabela específica para modo único
+        top_k: Número máximo de resultados (LIMIT) para queries SQL
 
     Returns:
         Agente SQL configurado
@@ -202,7 +203,7 @@ def create_sql_agent_executor(db: SQLDatabase, model_name: str = "gpt-4o-mini", 
             agent_type = "openai-tools"
             logging.warning(f"Modelo {model_name} não reconhecido, usando gpt-4o-mini como fallback")
 
-        # Cria o agente SQL 
+        # Cria o agente SQL
         sql_agent = create_sql_agent(
             llm=llm,
             db=db_to_use,  # Usa o SQLDatabase apropriado (restrito ou completo)
@@ -210,7 +211,7 @@ def create_sql_agent_executor(db: SQLDatabase, model_name: str = "gpt-4o-mini", 
             verbose=True,
             max_iterations=MAX_ITERATIONS,
             return_intermediate_steps=True,
-            top_k=10
+            top_k=top_k  # Usa o valor dinâmico configurado pelo usuário
         )
 
         logging.info(f"Agente SQL criado com sucesso usando modelo {model_name} ({model_id}) com agent_type={agent_type}")
@@ -225,19 +226,20 @@ class SQLAgentManager:
     Gerenciador do agente SQL com funcionalidades avançadas
     """
 
-    def __init__(self, db: SQLDatabase, model_name: str = "gpt-4o-mini", single_table_mode: bool = False, selected_table: str = None):
+    def __init__(self, db: SQLDatabase, model_name: str = "gpt-4o-mini", single_table_mode: bool = False, selected_table: str = None, top_k: int = 10):
         self.db = db
         self.model_name = model_name
         self.single_table_mode = single_table_mode
         self.selected_table = selected_table
+        self.top_k = top_k
         self.agent = None
         self._initialize_agent()
 
     def _initialize_agent(self):
         """Inicializa o agente SQL"""
-        self.agent = create_sql_agent_executor(self.db, self.model_name, self.single_table_mode, self.selected_table)
+        self.agent = create_sql_agent_executor(self.db, self.model_name, self.single_table_mode, self.selected_table, self.top_k)
     
-    def recreate_agent(self, new_db: SQLDatabase = None, new_model: str = None, single_table_mode: bool = None, selected_table: str = None):
+    def recreate_agent(self, new_db: SQLDatabase = None, new_model: str = None, single_table_mode: bool = None, selected_table: str = None, top_k: int = None):
         """
         Recria o agente com novos parâmetros
 
@@ -246,6 +248,7 @@ class SQLAgentManager:
             new_model: Novo modelo (opcional)
             single_table_mode: Novo modo de tabela (opcional)
             selected_table: Nova tabela selecionada (opcional)
+            top_k: Novo valor de TOP_K para LIMIT (opcional)
         """
         if new_db:
             self.db = new_db
@@ -255,10 +258,12 @@ class SQLAgentManager:
             self.single_table_mode = single_table_mode
         if selected_table is not None:
             self.selected_table = selected_table
+        if top_k is not None:
+            self.top_k = top_k
 
         self._initialize_agent()
         mode_info = f"modo {'tabela única' if self.single_table_mode else 'multi-tabela'}"
-        logging.info(f"Agente SQL recriado com modelo {self.model_name} em {mode_info}")
+        logging.info(f"Agente SQL recriado com modelo {self.model_name} em {mode_info}, TOP_K={self.top_k}")
     
     def _extract_text_from_claude_response(self, output) -> str:
         """

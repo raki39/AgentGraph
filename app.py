@@ -14,6 +14,7 @@ from utils.config import (
     AVAILABLE_MODELS,
     REFINEMENT_MODELS,
     DEFAULT_MODEL,
+    DEFAULT_TOP_K,
     GRADIO_SHARE,
     GRADIO_PORT,
     validate_config,
@@ -72,7 +73,7 @@ def run_async(coro):
     
     return loop.run_until_complete(coro)
 
-def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool = False, processing_enabled: bool = False, processing_model: str = "GPT-4o-mini", connection_type: str = "csv", postgresql_config: Optional[Dict] = None, selected_table: str = None, single_table_mode: bool = False) -> Tuple[str, Optional[str]]:
+def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool = False, processing_enabled: bool = False, processing_model: str = "GPT-4o-mini", connection_type: str = "csv", postgresql_config: Optional[Dict] = None, selected_table: str = None, single_table_mode: bool = False, top_k: int = 10) -> Tuple[str, Optional[str]]:
     """
     Processa resposta do chatbot usando LangGraph
 
@@ -86,6 +87,7 @@ def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool =
         postgresql_config: Configuração postgresql (se aplicável)
         selected_table: Tabela selecionada (para postgresql)
         single_table_mode: Se deve usar apenas uma tabela (postgresql)
+        top_k: Número máximo de resultados (LIMIT) para queries SQL
 
     Returns:
         Tupla com (resposta_texto, caminho_imagem_grafico)
@@ -106,7 +108,8 @@ def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool =
             connection_type=connection_type,
             postgresql_config=postgresql_config,
             selected_table=selected_table,
-            single_table_mode=single_table_mode
+            single_table_mode=single_table_mode,
+            top_k=top_k
         ))
 
         response_text = result.get("response", "Erro ao processar resposta")
@@ -338,15 +341,53 @@ def toggle_advanced_mode(enabled: bool) -> str:
 def toggle_history():
     """Alterna exibição do histórico"""
     global show_history_flag, graph_manager
-    
+
     show_history_flag = not show_history_flag
-    
+
     if show_history_flag and graph_manager:
         return graph_manager.get_history()
     else:
         return {}
 
-def respond(message: str, chat_history: List[Dict[str, str]], selected_model: str, advanced_mode: bool, processing_enabled: bool = False, processing_model: str = "GPT-4o-mini", connection_type: str = "csv", postgresql_config: Optional[Dict] = None, selected_table: str = None, single_table_mode: bool = False):
+def apply_top_k(top_k_value: int) -> str:
+    """
+    Aplica novo valor de TOP_K e força recriação do agente SQL
+
+    Args:
+        top_k_value: Novo valor de TOP_K
+
+    Returns:
+        Mensagem de feedback
+    """
+    global graph_manager
+
+    if not graph_manager:
+        return "❌ Sistema não inicializado."
+
+    try:
+        # Valida o valor
+        if not isinstance(top_k_value, (int, float)) or top_k_value < 1:
+            return "❌ TOP_K deve ser um número maior que 0."
+
+        top_k_value = int(top_k_value)
+
+        if top_k_value > 10000:
+            return "❌ TOP_K muito alto. Máximo permitido: 10.000."
+
+        # Força recriação do agente SQL com novo TOP_K
+        result = run_async(graph_manager.force_recreate_sql_agent(top_k=top_k_value))
+
+        if result.get("success", False):
+            return f"✅ TOP_K atualizado para {top_k_value}. Agente SQL recriado."
+        else:
+            return f"❌ Erro ao aplicar TOP_K: {result.get('message', 'Erro desconhecido')}"
+
+    except Exception as e:
+        error_msg = f"❌ Erro ao aplicar TOP_K: {e}"
+        logging.error(error_msg)
+        return error_msg
+
+def respond(message: str, chat_history: List[Dict[str, str]], selected_model: str, advanced_mode: bool, processing_enabled: bool = False, processing_model: str = "GPT-4o-mini", connection_type: str = "csv", postgresql_config: Optional[Dict] = None, selected_table: str = None, single_table_mode: bool = False, top_k: int = 10):
     """
     Função de resposta para o chatbot Gradio
 
@@ -361,6 +402,7 @@ def respond(message: str, chat_history: List[Dict[str, str]], selected_model: st
         postgresql_config: Configuração postgresql (se aplicável)
         selected_table: Tabela selecionada (para postgresql)
         single_table_mode: Se deve usar apenas uma tabela (postgresql)
+        top_k: Número máximo de resultados (LIMIT) para queries SQL
 
     Returns:
         Tupla com (mensagem_vazia, histórico_atualizado, imagem_grafico)
@@ -378,7 +420,7 @@ def respond(message: str, chat_history: List[Dict[str, str]], selected_model: st
         return "", chat_history, None
 
     # Processa resposta
-    response, graph_image_path = chatbot_response(message, selected_model, advanced_mode, processing_enabled, processing_model, connection_type, postgresql_config, selected_table, single_table_mode)
+    response, graph_image_path = chatbot_response(message, selected_model, advanced_mode, processing_enabled, processing_model, connection_type, postgresql_config, selected_table, single_table_mode, top_k)
 
     # Atualiza histórico no formato messages
     chat_history.append({"role": "user", "content": message})
@@ -763,6 +805,23 @@ def create_interface():
                             label="Refinar Resposta"
                         )
 
+                        # Controle TOP_K para LIMIT das queries SQL
+                        with gr.Group():
+                            top_k_input = gr.Number(
+                                value=DEFAULT_TOP_K,
+                                label="LIMIT",
+                                minimum=1,
+                                maximum=1000,
+                                step=1,
+                                info="Define quantos registros serão retornados nas consultas SQL"
+                            )
+                            top_k_apply_btn = gr.Button(
+                                "Aplicar",
+                                variant="primary",
+                                scale=1
+                            )
+                            top_k_feedback = gr.Markdown("", visible=False)
+
                 # 4. STATUS E CONTROLES
                 with gr.Group():
                     gr.Markdown("### Status do Sistema")
@@ -816,7 +875,7 @@ def create_interface():
                 return "", [], gr.update(visible=False)
 
         # Event handlers (usando as funções originais do sistema)
-        def handle_response_with_graph(message, chat_history, model, advanced, processing_enabled, processing_model, conn_type, pg_host, pg_port, pg_db, pg_user, pg_pass, pg_table, pg_single_mode):
+        def handle_response_with_graph(message, chat_history, model, advanced, processing_enabled, processing_model, conn_type, pg_host, pg_port, pg_db, pg_user, pg_pass, pg_table, pg_single_mode, top_k_value):
             """Wrapper para lidar com resposta e gráfico"""
 
             # Verifica se há conexão ativa antes de processar
@@ -837,7 +896,9 @@ def create_interface():
                     "password": pg_pass
                 }
 
-            empty_msg, updated_history, graph_path = respond(message, chat_history, model, advanced, processing_enabled, processing_model, conn_type, postgresql_config, pg_table, pg_single_mode)
+            # Converte top_k_value para int se necessário
+            top_k = int(top_k_value) if top_k_value else 10
+            empty_msg, updated_history, graph_path = respond(message, chat_history, model, advanced, processing_enabled, processing_model, conn_type, postgresql_config, pg_table, pg_single_mode, top_k)
 
             # Controla visibilidade do componente de gráfico
             if graph_path:
@@ -974,15 +1035,25 @@ def create_interface():
 
         msg.submit(
             handle_response_with_graph,
-            inputs=[msg, chatbot, model_selector, advanced_checkbox, processing_checkbox, processing_model_selector, connection_type, pg_host, pg_port, pg_database, pg_username, pg_password, pg_table_selector, pg_single_table_mode],
+            inputs=[msg, chatbot, model_selector, advanced_checkbox, processing_checkbox, processing_model_selector, connection_type, pg_host, pg_port, pg_database, pg_username, pg_password, pg_table_selector, pg_single_table_mode, top_k_input],
             outputs=[msg, chatbot, graph_image],
             show_progress=True  # Mostra carregamento no input do chat
         )
 
         btn.click(
             handle_response_with_graph,
-            inputs=[msg, chatbot, model_selector, advanced_checkbox, processing_checkbox, processing_model_selector, connection_type, pg_host, pg_port, pg_database, pg_username, pg_password, pg_table_selector, pg_single_table_mode],
+            inputs=[msg, chatbot, model_selector, advanced_checkbox, processing_checkbox, processing_model_selector, connection_type, pg_host, pg_port, pg_database, pg_username, pg_password, pg_table_selector, pg_single_table_mode, top_k_input],
             outputs=[msg, chatbot, graph_image]
+        )
+
+        # Conecta botão de aplicar TOP_K
+        top_k_apply_btn.click(
+            apply_top_k,
+            inputs=[top_k_input],
+            outputs=[top_k_feedback]
+        ).then(
+            lambda: gr.update(visible=True),
+            outputs=[top_k_feedback]
         )
 
         csv_file.change(

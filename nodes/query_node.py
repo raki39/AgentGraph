@@ -121,22 +121,27 @@ async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
             selected_table = state.get("selected_table")
             selected_model = state.get("selected_model", "gpt-4o-mini")
 
-            # Verifica se as configurações mudaram
+            # Verifica se as configurações mudaram (incluindo TOP_K)
             current_single_mode = getattr(sql_agent, 'single_table_mode', False)
             current_table = getattr(sql_agent, 'selected_table', None)
             current_model = getattr(sql_agent, 'model_name', 'gpt-4o-mini')
+            current_top_k = getattr(sql_agent, 'top_k', 10)
+            new_top_k = state.get("top_k", 10)
 
             if (single_table_mode != current_single_mode or
                 selected_table != current_table or
-                selected_model != current_model):
+                selected_model != current_model or
+                new_top_k != current_top_k):
 
-                logging.info(f"[QUERY] Recriando agente SQL - Modo: {'único' if single_table_mode else 'multi'}, Tabela: {selected_table}")
+                logging.info(f"[QUERY] Recriando agente SQL - Modo: {'único' if single_table_mode else 'multi'}, Tabela: {selected_table}, TOP_K: {current_top_k} → {new_top_k}")
 
                 # Recria o agente com as novas configurações
+                top_k = new_top_k
                 sql_agent.recreate_agent(
                     single_table_mode=single_table_mode,
                     selected_table=selected_table,
-                    new_model=selected_model
+                    new_model=selected_model,
+                    top_k=top_k
                 )
 
                 # Atualiza no ObjectManager

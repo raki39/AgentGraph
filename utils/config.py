@@ -89,6 +89,7 @@ HUGGINGFACE_MODELS = {
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "GPT-4o-mini")
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "40"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0"))
+DEFAULT_TOP_K = int(os.getenv("DEFAULT_TOP_K", "10"))
 
 # Configurações do Gradio
 GRADIO_SHARE = os.getenv("GRADIO_SHARE", "False").lower() == "true"

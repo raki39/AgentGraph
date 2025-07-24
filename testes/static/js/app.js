@@ -65,7 +65,6 @@ class TestManager {
             if (data.success) {
                 this.sessionId = data.session_id;
                 this.showSessionInfo(question);
-                this.showAlert('Sessão criada com sucesso!', 'success');
                 
                 // Mostra configuração de grupo
                 document.getElementById('groupConfig').style.display = 'block';
@@ -100,13 +99,14 @@ class TestManager {
         const sqlModel = document.getElementById('sqlModel').value;
         const processingEnabled = document.getElementById('enableProcessing').checked;
         const processingModel = processingEnabled ? document.getElementById('processingModel').value : null;
+        const questionRefinementEnabled = document.getElementById('enableQuestionRefinement').checked;
         const iterations = parseInt(document.getElementById('iterations').value);
-        
+
         if (iterations < 1 || iterations > 100) {
             this.showAlert('Número de iterações deve ser entre 1 e 100.', 'warning');
             return;
         }
-        
+
         try {
             const response = await fetch('/api/add_test_group', {
                 method: 'POST',
@@ -117,6 +117,7 @@ class TestManager {
                     sql_model: sqlModel,
                     processing_enabled: processingEnabled,
                     processing_model: processingModel,
+                    question_refinement_enabled: questionRefinementEnabled,
                     iterations: iterations
                 })
             });
@@ -126,7 +127,6 @@ class TestManager {
             if (data.success) {
                 this.groups.push(data.group);
                 this.updateGroupsList();
-                this.showAlert(`Grupo ${data.group.id} adicionado com sucesso!`, 'success');
                 
                 // Reset form
                 document.getElementById('iterations').value = 5;
@@ -159,6 +159,7 @@ class TestManager {
                             <small class="text-muted">
                                 <strong>SQL:</strong> ${group.sql_model_name}<br>
                                 <strong>Processing:</strong> ${group.processing_enabled ? group.processing_model_name : 'Desativado'}<br>
+                                <strong>Question Refinement:</strong> ${group.question_refinement_enabled ? 'Ativo (GPT-4o)' : 'Desativado'}<br>
                                 <strong>Iterações:</strong> ${group.iterations}
                             </small>
                         </div>
@@ -206,7 +207,6 @@ class TestManager {
                 this.updateStatus('running');
                 this.showProgressContainer();
                 this.startStatusPolling();
-                this.showAlert('Testes iniciados com sucesso!', 'success');
                 
                 // Desabilita controles
                 document.getElementById('addGroup').disabled = true;
@@ -346,7 +346,6 @@ class TestManager {
                 testElement.innerHTML = `
                     <div>
                         <strong>Grupo ${test.group_id}</strong> - Iteração ${test.iteration}
-                        <br><small class="text-muted">${test.question}</small>
                     </div>
                     <div class="text-end">
                         <span class="badge bg-warning">${minutes}m ${seconds}s</span>
@@ -540,7 +539,7 @@ class TestManager {
                             <small>
                                 ${summary.most_consistent_group.group_config.sql_model_name}<br>
                                 Processing: ${summary.most_consistent_group.group_config.processing_enabled ? 'Ativo' : 'Inativo'}<br>
-                                Consistência: ${summary.most_consistent_group.response_consistency}%
+                                Consistência: ${summary.most_consistent_group.validation_consistency}%
                             </small>
                         </div>
                     </div>
@@ -567,7 +566,7 @@ class TestManager {
                     <td>${group.total_tests}</td>
                     <td><span class="badge bg-${group.success_rate >= 80 ? 'success' : group.success_rate >= 60 ? 'warning' : 'danger'}">${group.success_rate}%</span></td>
                     <td><span class="badge bg-${group.validation_rate >= 80 ? 'success' : group.validation_rate >= 60 ? 'warning' : 'danger'}">${group.validation_rate}%</span></td>
-                    <td>${group.response_consistency}%</td>
+                    <td>${group.validation_consistency}%</td>
                     <td>${group.avg_execution_time}s</td>
                 </tr>
             `;
@@ -581,7 +580,7 @@ class TestManager {
         const individualContent = document.getElementById('individualContent');
         
         let html = '<div class="table-responsive"><table class="table table-sm"><thead><tr>';
-        html += '<th>Grupo</th><th>Iter.</th><th>Modelo SQL</th><th>Processing</th><th>Sucesso</th><th>Validação</th><th>Tempo</th><th>Ações</th>';
+        html += '<th>Grupo</th><th>Iter.</th><th>Modelo SQL</th><th>Processing</th><th>QR</th><th>Sucesso</th><th>Validação</th><th>Tempo</th><th>Ações</th>';
         html += '</tr></thead><tbody>';
 
         individualResults.slice(0, 100).forEach((result, index) => { // Limita a 100 para performance
@@ -590,12 +589,17 @@ class TestManager {
                 ? `<span class="badge bg-info" title="${result.processing_model || 'N/A'}">Sim</span>`
                 : '<span class="badge bg-secondary">Não</span>';
 
+            const qrBadge = result.question_refinement_enabled
+                ? '<span class="badge bg-warning" title="Question Refinement ativo">QR</span>'
+                : '<span class="badge bg-secondary">-</span>';
+
             html += `
                 <tr>
                     <td><strong>${result.group_id}</strong></td>
                     <td>${result.iteration}</td>
                     <td><small class="text-primary">${result.sql_model}</small></td>
                     <td>${processingBadge}</td>
+                    <td>${qrBadge}</td>
                     <td><span class="badge bg-${result.success ? 'success' : 'danger'}">${result.success ? 'Sim' : 'Não'}</span></td>
                     <td><span class="badge bg-${validation.valid ? 'success' : 'danger'}">${validation.score || 0}%</span></td>
                     <td><small>${result.execution_time}s</small></td>
@@ -622,10 +626,17 @@ class TestManager {
         const result = this.individualResults[index];
         const validation = result.validation || {};
         
+        // Determina qual pergunta mostrar
+        const questionToShow = result.question_refinement_enabled && result.refined_question
+            ? result.refined_question
+            : (result.original_question || result.question || 'N/A');
+
+        const isRefined = result.question_refinement_enabled && result.question_refinement_applied;
+
         const modal = `
             <div class="modal fade" id="resultModal" tabindex="-1">
-                <div class="modal-dialog modal-xl">
-                    <div class="modal-content">
+                <div class="modal-dialog" style="max-width: 1200px; margin: 2rem auto;">
+                    <div class="modal-content" style="max-height: 85vh; overflow: hidden;">
                         <div class="modal-header">
                             <h5 class="modal-title">
                                 <i class="fas fa-microscope"></i>
@@ -633,7 +644,36 @@ class TestManager {
                             </h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
                         </div>
-                        <div class="modal-body">
+                        <div class="modal-body" style="padding: 1.5rem;">
+                            <!-- Pergunta do Teste -->
+                            <div class="card mb-3">
+                                <div class="card-header">
+                                    <h6 class="mb-0">
+                                        <i class="fas fa-question-circle"></i>
+                                        Pergunta ${isRefined ? 'Refinada' : 'Original'}
+                                        ${isRefined ? '<span class="badge bg-warning ms-2">Refinada por GPT-4o</span>' : ''}
+                                    </h6>
+                                </div>
+                                <div class="card-body" style="padding: 1rem;">
+                                    <div class="question-text" style="font-size: 1.1em; line-height: 1.4; color: #2c3e50;">
+                                        "${questionToShow}"
+                                    </div>
+                                    ${isRefined && result.original_question ? `
+                                        <hr style="margin: 1rem 0;">
+                                        <small class="text-muted">Pergunta original:</small>
+                                        <div class="small text-muted" style="font-style: italic;">
+                                            "${result.original_question}"
+                                        </div>
+                                        ${result.question_refinement_changes && result.question_refinement_changes.length > 0 ? `
+                                            <small class="text-muted mt-2 d-block">Mudanças aplicadas:</small>
+                                            <div class="small text-info">
+                                                ${result.question_refinement_changes.join(', ')}
+                                            </div>
+                                        ` : ''}
+                                    ` : ''}
+                                </div>
+                            </div>
+
                             <!-- Configuração em Cards -->
                             <div class="row mb-4">
                                 <div class="col-md-6">
@@ -651,6 +691,12 @@ class TestManager {
                                                     <small class="text-muted">Processing Agent</small>
                                                     <div class="fw-bold ${result.processing_enabled ? 'text-info' : 'text-secondary'}">
                                                         ${result.processing_enabled ? result.processing_model : 'Desativado'}
+                                                    </div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <small class="text-muted">Question Refinement</small>
+                                                    <div class="fw-bold ${result.question_refinement_enabled ? 'text-warning' : 'text-secondary'}">
+                                                        ${result.question_refinement_enabled ? 'GPT-4o' : 'Desativado'}
                                                     </div>
                                                 </div>
                                             </div>
@@ -716,8 +762,8 @@ class TestManager {
                             </div>
 
                             ${result.error ? `
-                                <div class="card border-danger">
-                                    <div class="card-header bg-danger text-white">
+                                <div class="card">
+                                    <div class="card-header">
                                         <h6 class="mb-0"><i class="fas fa-exclamation-triangle"></i> Erro Detectado</h6>
                                     </div>
                                     <div class="card-body">
@@ -813,6 +859,7 @@ Grupo: ${result.group_id}
 Iteração: ${result.iteration}
 Modelo SQL: ${result.sql_model}
 Processing Agent: ${result.processing_enabled ? result.processing_model : 'Desativado'}
+Question Refinement: ${result.question_refinement_enabled ? 'Ativo (GPT-4o)' : 'Desativado'}
 Tempo: ${result.execution_time}s
 Status: ${result.status || 'Concluído'}
 

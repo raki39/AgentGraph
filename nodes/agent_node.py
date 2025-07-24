@@ -13,14 +13,25 @@ class AgentState(TypedDict):
     execution_time: float
     error: Optional[str]
     intermediate_steps: list
-    
+
     # Dados serializáveis do banco
     db_sample_dict: dict
-    
+
     # IDs para recuperar objetos não-serializáveis
     agent_id: str
     engine_id: str
     cache_id: str
+
+    # Campos relacionados ao refinamento de pergunta
+    question_refinement_enabled: bool  # Se o refinamento está habilitado
+    original_user_input: Optional[str]  # Pergunta original antes do refinamento
+    refined_question: Optional[str]  # Pergunta refinada pelo GPT-4o
+    question_refinement_applied: bool  # Se o refinamento foi aplicado
+    question_refinement_changes: list  # Lista de mudanças feitas
+    question_refinement_justification: Optional[str]  # Justificativa do refinamento
+    question_refinement_success: bool  # Se o refinamento foi bem-sucedido
+    question_refinement_error: Optional[str]  # Erro no refinamento
+    question_refinement_has_significant_change: bool  # Se houve mudança significativa
     
     # Campos relacionados a gráficos
     query_type: str  # 'sql_query', 'sql_query_graphic', 'prediction'
@@ -103,10 +114,10 @@ def should_generate_graph(state: Dict[str, Any]) -> str:
 def should_use_processing_agent(state: Dict[str, Any]) -> str:
     """
     Determina se deve usar o Processing Agent
-    
+
     Args:
         state: Estado atual
-        
+
     Returns:
         Nome do próximo nó
     """
@@ -114,6 +125,23 @@ def should_use_processing_agent(state: Dict[str, Any]) -> str:
         return "validate_processing"
     else:
         return "prepare_context"
+
+
+def should_refine_question(state: Dict[str, Any]) -> str:
+    """
+    Determina se deve refinar a pergunta
+
+    Args:
+        state: Estado atual
+
+    Returns:
+        Nome do próximo nó
+    """
+    if state.get("question_refinement_enabled", False):
+        return "question_refinement"
+    else:
+        # Pula refinamento e vai para validação de processing
+        return "validate_processing"
 
 
 def route_after_cache_check(state: Dict[str, Any]) -> str:
@@ -132,6 +160,7 @@ def route_after_cache_check(state: Dict[str, Any]) -> str:
 
     cache_hit = state.get("cache_hit", False)
     processing_enabled = state.get("processing_enabled", False)
+    question_refinement_enabled = state.get("question_refinement_enabled", False)
 
     # DESATIVAÇÃO TEMPORÁRIA DO CACHE
     # Força cache_hit = False para sempre processar queries
@@ -139,10 +168,21 @@ def route_after_cache_check(state: Dict[str, Any]) -> str:
 
     logging.info(f"[ROUTING] Cache hit: {cache_hit} (CACHE DESATIVADO TEMPORARIAMENTE)")
     logging.info(f"[ROUTING] Processing enabled: {processing_enabled}")
+    logging.info(f"[ROUTING] Question refinement enabled: {question_refinement_enabled}")
 
     if cache_hit:
         logging.info("[ROUTING] Direcionando para update_history (cache hit)")
         return "update_history"
+
+    # Se não tem conexão, vai para seleção de conexão
+    if not state.get("agent_id") or not state.get("engine_id"):
+        logging.info("[ROUTING] Direcionando para connection_selection (sem conexão)")
+        return "connection_selection"
+
+    # Se refinamento está habilitado E ainda não foi aplicado, vai para refinamento primeiro
+    if question_refinement_enabled and not state.get("question_refinement_applied", False):
+        logging.info("[ROUTING] Direcionando para question_refinement (refinamento habilitado)")
+        return "question_refinement"
     elif processing_enabled:
         logging.info("[ROUTING] Direcionando para validate_processing (processing habilitado)")
         return "validate_processing"

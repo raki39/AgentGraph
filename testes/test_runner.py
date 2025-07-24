@@ -112,9 +112,17 @@ class MassiveTestRunner:
             group_results = []
             
             for group_idx, group in enumerate(session['groups']):
+                # Verifica se todos os testes foram cancelados
+                with self._lock:
+                    if len(self.status['cancelled_tests']) >= self.status['total_tests']:
+                        print(f"🚫 Todos os testes foram cancelados - finalizando sessão")
+                        logging.info("Todos os testes foram cancelados - finalizando sessão")
+                        break
+
                 print(f"\n📊 EXECUTANDO GRUPO {group_idx + 1}/{len(session['groups'])}")
                 print(f"🤖 Modelo SQL: {group['sql_model_name']}")
                 print(f"🔄 Processing Agent: {'✅ ' + group['processing_model_name'] if group['processing_enabled'] else '❌ Desativado'}")
+                print(f"🔧 Question Refinement: {'✅ GPT-4o' if group.get('question_refinement_enabled', False) else '❌ Desativado'}")
                 print(f"🔢 Iterações: {group['iterations']}")
                 print(f"⏰ {datetime.now().strftime('%H:%M:%S')}")
 
@@ -123,7 +131,7 @@ class MassiveTestRunner:
                 with self._lock:
                     self.status['current_group'] = group_idx + 1
                     self.status['current_status'] = 'running_group'
-                
+
                 # Executa testes do grupo em paralelo
                 group_result = await self._run_group_tests(
                     session['question'],
@@ -203,6 +211,12 @@ class MassiveTestRunner:
 
         print(f"⚡ Criando {group['iterations']} tasks paralelas...")
         for iteration in range(group['iterations']):
+            # Verifica se todos os testes foram cancelados antes de criar mais tasks
+            with self._lock:
+                if len(self.status['cancelled_tests']) >= self.status['total_tests']:
+                    print(f"🚫 Cancelamento detectado - parando criação de tasks")
+                    break
+
             task = self._run_single_test(
                 semaphore,
                 question,
@@ -216,8 +230,37 @@ class MassiveTestRunner:
         print(f"🚀 Executando {len(tasks)} testes em paralelo...")
         start_time = time.time()
 
-        # Executa testes em paralelo (COMO ESTAVA ANTES)
-        individual_results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Executa testes em paralelo com verificação de cancelamento
+        try:
+            individual_results = await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            print(f"🚫 Grupo {group['id']} cancelado durante execução")
+            # Coleta resultados dos testes que já terminaram
+            individual_results = []
+            for task in tasks:
+                if task.done() and not task.cancelled():
+                    try:
+                        result = task.result()
+                        individual_results.append(result)
+                    except Exception as e:
+                        individual_results.append(e)
+                else:
+                    # Cria resultado cancelado para testes não terminados
+                    cancelled_result = {
+                        'group_id': group['id'],
+                        'iteration': len(individual_results) + 1,
+                        'success': False,
+                        'cancelled': True,
+                        'cancel_reason': 'group_cancelled',
+                        'execution_time': 0,
+                        'sql_query': None,
+                        'final_response': "Teste cancelado durante execução do grupo",
+                        'validation_valid': False,
+                        'validation_score': 0,
+                        'error': None,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    individual_results.append(cancelled_result)
 
         execution_time = time.time() - start_time
         print(f"✅ Grupo {group['id']} concluído em {execution_time:.2f}s")
@@ -331,6 +374,7 @@ class MassiveTestRunner:
                                     selected_model=group['sql_model_name'],
                                     processing_enabled=group['processing_enabled'],
                                     processing_model=group['processing_model_name'] if group['processing_enabled'] else None,
+                                    question_refinement_enabled=group.get('question_refinement_enabled', False),
                                     thread_id=thread_id
                                 )
 
@@ -451,6 +495,11 @@ class MassiveTestRunner:
                     'sql_model': group['sql_model_name'],
                     'processing_enabled': group['processing_enabled'],
                     'processing_model': group['processing_model_name'],
+                    'question_refinement_enabled': group.get('question_refinement_enabled', False),
+                    'original_question': result.get('original_user_input', question),
+                    'refined_question': result.get('refined_question', question),
+                    'question_refinement_applied': result.get('question_refinement_applied', False),
+                    'question_refinement_changes': result.get('question_refinement_changes', []),
                     'sql_query': result.get('sql_query_extracted', ''),
                     'response': result.get('response', ''),
                     'error': result.get('error'),
@@ -534,12 +583,12 @@ class MassiveTestRunner:
         successful_tests = sum(1 for r in results if r.get('success', False))
         valid_responses = sum(1 for r in results if r.get('validation', {}).get('valid', False))
         
-        # Calcula consistência baseada na pontuação de validação (CORRIGIDO)
-        validation_scores = [r.get('validation', {}).get('score', 0) for r in results if r.get('success', False)]
-        sql_queries = [r.get('sql_query', '') for r in results if r.get('success', False)]
+        # Calcula consistência baseada na porcentagem de testes válidos
+        successful_results = [r for r in results if r.get('success', False)]
+        sql_queries = [r.get('sql_query', '') for r in successful_results]
 
-        # Consistência baseada em pontuações similares (não texto)
-        response_consistency = self._calculate_score_consistency(validation_scores)
+        # Consistência baseada na porcentagem de validações corretas
+        validation_consistency = self._calculate_validation_consistency(successful_results)
         sql_consistency = self._calculate_consistency(sql_queries)
         
         avg_execution_time = sum(r.get('execution_time', 0) for r in results) / total_tests
@@ -552,7 +601,7 @@ class MassiveTestRunner:
             'valid_responses': valid_responses,
             'success_rate': round((successful_tests / total_tests) * 100, 2),
             'validation_rate': round((valid_responses / total_tests) * 100, 2),
-            'response_consistency': round(response_consistency * 100, 2),
+            'validation_consistency': round(validation_consistency, 2),
             'sql_consistency': round(sql_consistency * 100, 2),
             'avg_execution_time': round(avg_execution_time, 2),
             'individual_results': results
@@ -577,52 +626,34 @@ class MassiveTestRunner:
 
         return most_common_count / len(items)
 
-    def _calculate_score_consistency(self, scores: List[float]) -> float:
+    def _calculate_validation_consistency(self, results: List[dict]) -> float:
         """
-        Calcula consistência baseada em pontuações de validação (NOVO MÉTODO CORRETO)
+        Calcula consistência baseada na porcentagem de testes válidos vs inválidos
 
         Args:
-            scores: Lista de pontuações de validação (0-100)
+            results: Lista de resultados dos testes com informações de validação
 
         Returns:
-            Taxa de consistência baseada em pontuações similares (0-100)
+            Porcentagem de testes válidos (0-100%)
         """
-        if len(scores) <= 1:
-            return 100.0
-
-        if not scores:
+        if not results:
             return 0.0
 
-        # Agrupa pontuações em faixas para considerar similares
-        # Faixas: 0-20, 21-40, 41-60, 61-80, 81-100
-        def get_score_range(score):
-            if score >= 81:
-                return "excelente"  # 81-100
-            elif score >= 61:
-                return "bom"        # 61-80
-            elif score >= 41:
-                return "regular"    # 41-60
-            elif score >= 21:
-                return "ruim"       # 21-40
-            else:
-                return "muito_ruim" # 0-20
+        # Conta quantos testes foram validados como corretos
+        valid_count = 0
+        total_count = len(results)
 
-        # Agrupa por faixas
-        score_ranges = [get_score_range(score) for score in scores]
+        for result in results:
+            validation = result.get('validation', {})
+            is_valid = validation.get('valid', False)
+            if is_valid:
+                valid_count += 1
 
-        # Calcula consistência baseada na faixa mais comum
-        from collections import Counter
-        range_counts = Counter(score_ranges)
-        most_common_count = range_counts.most_common(1)[0][1]
+        # Consistência = porcentagem de testes válidos
+        consistency_rate = (valid_count / total_count) * 100
 
-        consistency_rate = (most_common_count / len(scores)) * 100
-
-        # Garante que nunca passe de 100%
-        consistency_rate = min(consistency_rate, 100.0)
-
-        print(f"🔍 [CONSISTENCY] Pontuações: {scores}")
-        print(f"🔍 [CONSISTENCY] Faixas: {score_ranges}")
-        print(f"🔍 [CONSISTENCY] Mais comum: {most_common_count}/{len(scores)} = {consistency_rate:.1f}%")
+        print(f"🔍 [VALIDATION_CONSISTENCY] Total: {total_count}, Válidos: {valid_count}, Inválidos: {total_count - valid_count}")
+        print(f"🔍 [VALIDATION_CONSISTENCY] Consistência: {valid_count}/{total_count} = {consistency_rate:.1f}%")
 
         return round(consistency_rate, 2)
     
@@ -640,11 +671,11 @@ class MassiveTestRunner:
         
         avg_success_rate = sum(gr['success_rate'] for gr in group_results) / len(group_results)
         avg_validation_rate = sum(gr['validation_rate'] for gr in group_results) / len(group_results)
-        avg_response_consistency = sum(gr['response_consistency'] for gr in group_results) / len(group_results)
+        avg_validation_consistency = sum(gr['validation_consistency'] for gr in group_results) / len(group_results)
         avg_sql_consistency = sum(gr['sql_consistency'] for gr in group_results) / len(group_results)
 
         # Garante que as médias não passem de 100%
-        avg_response_consistency = min(avg_response_consistency, 100.0)
+        avg_validation_consistency = min(avg_validation_consistency, 100.0)
         avg_sql_consistency = min(avg_sql_consistency, 100.0)
         
         self.results['summary'] = {
@@ -654,10 +685,10 @@ class MassiveTestRunner:
             'total_valid': total_valid,
             'overall_success_rate': round((total_successful / total_tests) * 100, 2),
             'overall_validation_rate': round((total_valid / total_tests) * 100, 2),
-            'avg_response_consistency': round(avg_response_consistency, 2),
+            'avg_validation_consistency': round(avg_validation_consistency, 2),
             'avg_sql_consistency': round(avg_sql_consistency, 2),
             'best_performing_group': max(group_results, key=lambda x: x['validation_rate']),
-            'most_consistent_group': max(group_results, key=lambda x: x['response_consistency'])
+            'most_consistent_group': max(group_results, key=lambda x: x['validation_consistency'])
         }
     
     def get_status(self) -> Dict[str, Any]:

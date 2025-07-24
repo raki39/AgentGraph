@@ -114,6 +114,7 @@ def add_test_group():
         iterations = int(data['iterations'])
         processing_enabled = data.get('processing_enabled', False)
         processing_model = data.get('processing_model', None)
+        question_refinement_enabled = data.get('question_refinement_enabled', False)
         
         # Validações
         if sql_model not in AVAILABLE_MODELS.values():
@@ -142,6 +143,7 @@ def add_test_group():
             'processing_enabled': processing_enabled,
             'processing_model': processing_model,
             'processing_model_name': next((k for k, v in AVAILABLE_MODELS.items() if v == processing_model), None) if processing_model else None,
+            'question_refinement_enabled': question_refinement_enabled,
             'iterations': iterations,
             'created_at': datetime.now().isoformat()
         }

@@ -120,7 +120,7 @@ class ReportGenerator:
                 'Respostas_Válidas': group.get('valid_responses'),
                 'Taxa_Sucesso_%': group.get('success_rate'),
                 'Taxa_Validação_%': group.get('validation_rate'),
-                'Consistência_Resposta_%': group.get('response_consistency'),
+                'Consistência_Validação_%': group.get('validation_consistency'),
                 'Consistência_SQL_%': group.get('sql_consistency'),
                 'Tempo_Médio_Execução_s': group.get('avg_execution_time'),
                 'Erros_Totais': group.get('error_count', 0)
@@ -156,7 +156,12 @@ class ReportGenerator:
                 'Modelo_SQL': result.get('sql_model'),
                 'Processing_Agent_Ativo': 'Sim' if result.get('processing_enabled') else 'Não',
                 'Modelo_Processing': result.get('processing_model', 'N/A'),
-                'Pergunta': result.get('question'),
+                'Question_Refinement_Ativo': 'Sim' if result.get('question_refinement_enabled') else 'Não',
+                'Pergunta_Original': result.get('original_question', result.get('question', '')),
+                'Pergunta_Refinada': result.get('refined_question', result.get('question', '')),
+                'QR_Aplicado': 'Sim' if result.get('question_refinement_applied') else 'Não',
+                'QR_Mudanças': ', '.join(result.get('question_refinement_changes', [])),
+                'Pergunta_Usada': result.get('question'),
                 'Query_SQL': result.get('sql_query'),
                 'Resposta_Final': result.get('response'),
                 'Sucesso': 'Sim' if result.get('success') else 'Não',
@@ -193,7 +198,7 @@ class ReportGenerator:
             {'Métrica': 'Total de Válidos', 'Valor': summary.get('total_valid', 0)},
             {'Métrica': 'Taxa Geral de Sucesso (%)', 'Valor': summary.get('overall_success_rate', 0)},
             {'Métrica': 'Taxa Geral de Validação (%)', 'Valor': summary.get('overall_validation_rate', 0)},
-            {'Métrica': 'Consistência Média de Resposta (%)', 'Valor': summary.get('avg_response_consistency', 0)},
+            {'Métrica': 'Consistência Média de Validação (%)', 'Valor': summary.get('avg_validation_consistency', 0)},
             {'Métrica': 'Consistência Média de SQL (%)', 'Valor': summary.get('avg_sql_consistency', 0)},
         ]
         

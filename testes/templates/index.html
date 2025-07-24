@@ -6,7 +6,7 @@
     <title>Sistema de Testes Massivos - AgentGraph</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         /* Design System - Inspirado em Sistema de Monitoramento */
         :root {
@@ -36,14 +36,16 @@
             --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5);
         }
 
-        /* Layout Principal */
+        /* Layout Principal com fonte profissional */
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: var(--bg-dark);
             color: var(--text-primary);
             margin: 0;
             padding: 0;
             overflow-x: hidden;
+            font-weight: 400;
+            letter-spacing: 0.01em;
         }
 
         .container-fluid {
@@ -63,12 +65,13 @@
 
         .sidebar h4 {
             color: var(--text-primary);
-            font-weight: 700;
+            font-weight: 600;
             margin-bottom: 1.5rem;
             font-size: 1.1rem;
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            letter-spacing: 0.02em;
         }
 
         .sidebar h4 i {
@@ -86,33 +89,72 @@
             letter-spacing: 0.1em;
         }
 
+        /* Formulários sem bordas - mesmo estilo do sidebar */
+        .form-control, .form-select,
         .sidebar .form-control,
         .sidebar .form-select {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            color: var(--text-primary);
-            border-radius: var(--border-radius);
-            font-size: 0.875rem;
-            padding: 0.5rem 0.75rem;
+            background: var(--bg-card) !important;
+            color: var(--text-primary) !important;
+            border-radius: 6px !important;
+            font-size: 0.9rem !important;
+            padding: 0.5rem 0.75rem !important;
+            transition: background-color 0.2s ease !important;
         }
 
+        .form-control::placeholder,
         .sidebar .form-control::placeholder {
-            color: var(--text-muted);
+            color: var(--text-muted) !important;
+            font-size: 0.8rem !important;
         }
 
+        .form-control:focus, .form-select:focus,
         .sidebar .form-control:focus,
         .sidebar .form-select:focus {
-            background: var(--bg-card-hover);
-            border-color: var(--primary-blue);
-            box-shadow: 0 0 0 2px rgb(74 158 255 / 0.2);
-            color: var(--text-primary);
+            background: var(--bg-card-hover) !important;
+            color: var(--text-primary) !important;
+            outline: none !important;
         }
 
-        /* Main Content */
+        /* Main Content - fontes menores e melhor disposição */
         .main-content {
-            background: var(--bg-dark);
-            min-height: 100vh;
-            padding: 2rem;
+            background: var(--bg-dark) !important;
+            min-height: 100vh !important;
+            padding: 1.5rem !important;
+            font-size: 0.875rem !important;
+        }
+
+        /* Títulos menores */
+        .main-content h1 {
+            font-size: 1.25rem !important;
+            font-weight: 600 !important;
+            margin-bottom: 1rem !important;
+        }
+
+        .main-content h2 {
+            font-size: 1.1rem !important;
+            font-weight: 600 !important;
+            margin-bottom: 0.75rem !important;
+        }
+
+        .main-content h3 {
+            font-size: 1rem !important;
+            font-weight: 500 !important;
+            margin-bottom: 0.5rem !important;
+        }
+
+        /* Texto geral menor */
+        .main-content p, .main-content div, .main-content span {
+            font-size: 0.875rem !important;
+            line-height: 1.4 !important;
+        }
+
+        /* Labels menores */
+        .main-content label {
+            font-size: 0.75rem !important;
+            font-weight: 500 !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.5px !important;
+            color: var(--text-secondary) !important;
         }
 
         /* Container spacing */
@@ -124,50 +166,75 @@
             margin-bottom: 0;
         }
 
-        /* Header Dashboard */
+        /* Header Dashboard sem bordas */
         .dashboard-header {
-            background: var(--bg-card);
-            border-radius: var(--border-radius);
-            padding: 1rem 1.5rem;
-            margin-bottom: 1.5rem;
-            border: 1px solid var(--border-color);
-            box-shadow: var(--shadow-sm);
+            background: var(--bg-card) !important;
+            border-radius: 8px !important;
+            padding: 1rem 1.5rem !important;
+            margin-bottom: 1rem !important;
         }
 
         .dashboard-header h2 {
-            color: var(--text-primary);
-            font-weight: 700;
-            margin: 0;
-            font-size: 1.25rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
+            color: var(--text-primary) !important;
+            font-weight: 600 !important;
+            margin: 0 !important;
+            font-size: 1.1rem !important;
+            display: flex !important;
+            align-items: center !important;
+            gap: 0.5rem !important;
         }
 
         .dashboard-header h2 i {
-            color: var(--primary-blue);
-            font-size: 1.1rem;
+            color: var(--primary-blue) !important;
+            font-size: 1rem !important;
         }
 
-        /* Cards Estilo Sistema de Monitoramento */
+        /* REDESIGN REAL - Sistema Moderno SEM BORDAS */
+
+        /* Reset completo - REMOVER TODAS AS BORDAS */
+        * {
+            border: none !important;
+            box-shadow: none !important;
+        }
+
+        /* Cards modernos sem bordas - inspirado na imagem */
+        .card {
+            background: var(--bg-card) !important;
+            border-radius: 8px !important;
+            margin-bottom: 1rem !important;
+            padding: 0 !important;
+            overflow: hidden;
+        }
+
+        .card-header {
+            background: var(--bg-card) !important;
+            color: var(--text-secondary) !important;
+            font-weight: 500 !important;
+            font-size: 0.75rem !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.5px !important;
+            padding: 0.75rem 1rem !important;
+            margin-bottom: 0 !important;
+        }
+
+        .card-body {
+            background: var(--bg-card) !important;
+            color: var(--text-primary) !important;
+            padding: 1rem !important;
+            font-size: 0.875rem !important;
+        }
+
+        /* Metric cards sem bordas */
         .metric-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: var(--border-radius);
-            padding: 1.5rem 1rem;
-            margin: 0.75rem 0;
-            box-shadow: var(--shadow-sm);
-            transition: all 0.2s ease;
-            position: relative;
+            background: var(--bg-card) !important;
+            border-radius: 8px !important;
+            padding: 1rem !important;
+            margin: 0.5rem 0 !important;
             text-align: center;
+            transition: background-color 0.2s ease;
         }
 
-        .metric-card:hover {
-            background: var(--bg-card-hover);
-            border-color: var(--primary-blue);
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-md);
-        }
+
 
         .metric-value {
             font-size: 2rem;
@@ -195,23 +262,31 @@
             transition: all 0.2s ease;
         }
 
-        .test-group-card:hover {
-            background: var(--bg-card-hover);
-            border-color: var(--primary-blue);
+
+
+        /* Badges tamanho padrão */
+        .badge, .status-badge {
+            padding: 0.375rem 0.75rem !important;
+            border-radius: 6px !important;
+            font-weight: 500 !important;
+            font-size: 0.75rem !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 0.375rem !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.5px !important;
         }
 
-        /* Status Badges Estilo Sistema */
-        .status-badge {
-            padding: 0.375rem 0.75rem;
-            border-radius: var(--border-radius);
-            font-weight: 600;
-            font-size: 0.75rem;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.375rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            border: 1px solid transparent;
+        /* Checkboxes menores no sidebar */
+        .sidebar input[type="checkbox"] {
+            transform: scale(0.85) !important;
+            margin-right: 0.5rem !important;
+        }
+
+        .sidebar .form-check-label {
+            font-size: 0.9rem !important;
+            color: var(--text-secondary) !important;
+            font-weight: 500 !important;
         }
 
         .status-idle {
@@ -257,26 +332,24 @@
             margin: 1rem 0;
         }
 
-        /* Botões Estilo Sistema */
+        /* Botões sem bordas - estilo sistemático */
         .btn {
-            border-radius: var(--border-radius);
-            font-weight: 600;
-            padding: 0.5rem 1rem;
-            border: 1px solid transparent;
-            transition: all 0.2s ease;
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
+            border-radius: 6px !important;
+            font-weight: 500 !important;
+            padding: 0.5rem 1rem !important;
+            transition: all 0.2s ease !important;
+            font-size: 0.75rem !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.5px !important;
         }
 
         .btn:hover {
-            transform: translateY(-1px);
+            transform: translateY(-1px) !important;
         }
 
         .btn-primary {
-            background: var(--primary-blue);
-            border-color: var(--primary-blue);
-            color: var(--text-primary);
+            background: var(--primary-blue) !important;
+            color: white !important;
         }
 
         .btn-primary:hover {
@@ -292,9 +365,23 @@
         }
 
         .btn-warning {
-            background: var(--warning-orange);
-            border-color: var(--warning-orange);
+            background: linear-gradient(135deg, var(--success-green) 0%, #0d9488 100%) !important;
+            border-color: var(--success-green);
             color: var(--text-primary);
+        }
+
+        .btn-warning:hover {
+            background: var(--success-green);
+            color: white !important;
+        }
+
+        /* Botões de cancelar com borda azul */
+        #cancelCurrentBtn, #skipStuckBtn, #cancelAllBtn {
+            border: 2px solid var(--primary-blue) !important;
+        }
+
+        #cancelCurrentBtn:hover, #skipStuckBtn:hover, #cancelAllBtn:hover {
+            border: 2px solid var(--primary-blue) !important;
         }
 
         .btn-danger {
@@ -388,22 +475,57 @@
         }
 
         .table td {
-            border: none;
-            padding: 0.75rem;
-            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-card) !important;
+            padding: 0.75rem 1rem !important;
             color: var(--text-primary) !important;
+            font-size: 0.8rem !important;
+            vertical-align: middle !important;
         }
 
-        .table tbody tr {
-            color: var(--text-primary) !important;
-        }
-
-        .table tbody tr td {
-            color: var(--text-primary) !important;
+        .table tbody tr:hover td {
+            background: var(--bg-card-hover) !important;
         }
 
         .table tbody tr td * {
             color: var(--text-primary) !important;
+            font-size: 0.8rem !important;
+        }
+
+        /* Cores neutras para badges na tabela com opacidade */
+        .table .badge.bg-success {
+            background: rgba(34, 197, 94, 0.7) !important;
+            color: white !important;
+        }
+
+        .table .badge.bg-danger {
+            background: rgba(239, 68, 68, 0.7) !important;
+            color: white !important;
+        }
+
+        .table .badge.bg-warning {
+            background: rgba(245, 158, 11, 0.8) !important;
+            color: var(--text-primary) !important;
+        }
+
+        .table .badge.bg-info {
+            background: rgba(6, 182, 212, 0.7) !important;
+            color: white !important;
+        }
+
+        /* Badge do teste atual com cor mais escura */
+        .badge.bg-info {
+            background: var(--primary-blue) !important;
+            color: white !important;
+        }
+
+        .table .badge.bg-primary {
+            background: rgba(59, 130, 246, 0.7) !important;
+            color: white !important;
+        }
+
+        .table .badge.bg-secondary {
+            background: rgba(107, 114, 128, 0.7) !important;
+            color: white !important;
         }
 
         /* Ícones */
@@ -636,7 +758,7 @@
         }
 
         .modal-body .card-header {
-            background: var(--bg-card) !important;
+            background: var(--bg-darker) !important;
             border-bottom: 1px solid var(--border-color) !important;
             padding: 0.75rem 1rem !important;
         }
@@ -644,6 +766,27 @@
         .modal-body .card-body {
             background: var(--bg-darker) !important;
             padding: 1rem !important;
+        }
+
+        /* Remover TODAS as bordas dos componentes dentro do modal */
+        .modal-body .card,
+        .modal-body .card-header,
+        .modal-body .card-body,
+        .modal-body .card-footer,
+        .modal-body .alert,
+        .modal-body .row .card,
+        .modal-body .col-md-6 .card {
+            border: none !important;
+            box-shadow: none !important;
+        }
+
+        .modal-body .card-header {
+            border-bottom: none !important;
+        }
+
+        .modal-body .alert {
+            border: none !important;
+            border-left: none !important;
         }
 
         /* Formatação especial para números grandes */
@@ -692,6 +835,310 @@
 
         ::-webkit-scrollbar-thumb:hover {
             background: var(--text-muted);
+        }
+
+        /* REDESIGN VISUAL SISTEMÁTICO - Remover aspecto Bootstrap */
+
+        /* Reset completo de componentes Bootstrap */
+        .card, .card-header, .card-body, .card-footer,
+        .table, .table th, .table td,
+        .form-control, .form-select, .form-label,
+        .btn, .badge, .alert,
+        .modal-content, .modal-header, .modal-body, .modal-footer {
+            border: none !important;
+            box-shadow: none !important;
+        }
+
+        /* Sistema de Cards Moderno */
+        .card {
+            background: var(--bg-card) !important;
+            border-radius: 12px !important;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+            margin-bottom: 1.5rem;
+            transition: all 0.3s ease;
+        }
+
+
+
+        .card-header {
+            background: linear-gradient(135deg, var(--bg-darker) 0%, var(--bg-card) 100%) !important;
+            color: var(--text-primary) !important;
+            font-weight: 600;
+            padding: 1.25rem 1.5rem !important;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .card-body {
+            background: var(--bg-card) !important;
+            color: var(--text-primary) !important;
+            padding: 1.5rem !important;
+        }
+
+        /* Modal sem bordas - sistemático */
+        .modal-dialog {
+            max-width: 1200px !important;
+            margin: 2rem auto !important;
+            display: flex !important;
+            align-items: center !important;
+            min-height: calc(100vh - 4rem) !important;
+        }
+
+        .modal-content {
+            background: var(--bg-card) !important;
+            border-radius: 8px !important;
+            overflow: hidden !important;
+            max-height: 90vh !important;
+            width: 100% !important;
+        }
+
+        .modal-header {
+            background: var(--bg-darker) !important;
+            color: var(--text-primary) !important;
+            padding: 1rem 1.5rem !important;
+            font-weight: 500 !important;
+            font-size: 0.9rem !important;
+        }
+
+        .modal-body {
+            background: var(--bg-card) !important;
+            color: var(--text-primary) !important;
+            padding: 1.5rem !important;
+            max-height: 70vh !important;
+            overflow-y: auto !important;
+            font-size: 0.875rem !important;
+        }
+
+        .modal-footer {
+            background: var(--bg-darker) !important;
+            padding: 1rem 1.5rem !important;
+            display: flex !important;
+            gap: 0.75rem !important;
+            justify-content: flex-end !important;
+        }
+
+        /* Sistema de Tabelas Moderno */
+        .table {
+            background: var(--bg-card) !important;
+            border-radius: 12px !important;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+        }
+
+        .table th {
+            background: var(--bg-darker) !important;
+            color: var(--text-secondary) !important;
+            font-weight: 600;
+            padding: 1rem 1.25rem !important;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.5px;
+        }
+
+        .table td {
+            background: var(--bg-card) !important;
+            color: var(--text-primary) !important;
+            padding: 1rem 1.25rem !important;
+            vertical-align: middle;
+            transition: background-color 0.2s ease;
+        }
+
+        .table tbody tr:hover td {
+            background: var(--bg-card-hover) !important;
+        }
+
+        /* Sistema de Formulários Moderno */
+        .form-control, .form-select {
+            background: var(--bg-card) !important;
+            color: var(--text-primary) !important;
+            border-radius: 8px !important;
+            padding: 0.75rem 1rem !important;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+        }
+
+        .form-control:focus, .form-select:focus {
+            background: var(--bg-card-hover) !important;
+            color: var(--text-primary) !important;
+            box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.2), inset 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+            transform: translateY(-1px);
+        }
+
+        .form-label {
+            color: var(--text-secondary) !important;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Sistema de Botões Moderno */
+        .btn {
+            border-radius: 8px !important;
+            font-weight: 600;
+            padding: 0.75rem 1.5rem !important;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-blue) 0%, var(--primary-blue-dark) 100%) !important;
+            color: white !important;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, var(--success-green) 0%, #0d9488 100%) !important;
+            color: white !important;
+        }
+
+        .btn-outline-primary {
+            background: transparent !important;
+            color: var(--primary-blue) !important;
+            box-shadow: inset 0 0 0 2px var(--primary-blue) !important;
+        }
+
+        .btn-outline-primary:hover {
+            background: var(--primary-blue) !important;
+            color: white !important;
+        }
+
+        /* Sistema de Badges Moderno */
+        .badge {
+            border-radius: 6px !important;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 0.4rem 0.8rem !important;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+        }
+
+        /* Elementos do modal sem bordas */
+        .question-text {
+            background: var(--bg-darker) !important;
+            padding: 1rem !important;
+            border-radius: 6px !important;
+            font-weight: 500 !important;
+            margin-bottom: 1rem !important;
+            font-size: 0.875rem !important;
+        }
+
+        .modal-code-block {
+            background: var(--bg-darker) !important;
+            padding: 1rem !important;
+            border-radius: 6px !important;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace !important;
+            font-size: 0.75rem !important;
+            line-height: 1.4 !important;
+            overflow-x: auto !important;
+            color: var(--text-primary) !important;
+            font-weight: 400 !important;
+        }
+
+        .modal-response-block {
+            background: var(--bg-darker) !important;
+            padding: 1rem !important;
+            border-radius: 6px !important;
+            line-height: 1.5 !important;
+            color: var(--text-primary) !important;
+            font-size: 0.875rem !important;
+        }
+
+        /* Sistema de Alertas Moderno */
+        .alert {
+            border-radius: 12px !important;
+            padding: 1.25rem 1.5rem !important;
+            margin-bottom: 1.5rem;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
+        }
+
+        .alert-info {
+            background: linear-gradient(135deg, rgba(74, 158, 255, 0.15) 0%, rgba(59, 130, 246, 0.1) 100%) !important;
+            color: var(--text-primary) !important;
+            border-left: 4px solid var(--primary-blue) !important;
+        }
+
+        .alert-success {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.1) 100%) !important;
+            color: var(--text-primary) !important;
+            border-left: 4px solid var(--success-green) !important;
+        }
+
+        .alert-warning {
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(217, 119, 6, 0.1) 100%) !important;
+            color: var(--text-primary) !important;
+            border-left: 4px solid var(--warning-orange) !important;
+        }
+
+        .alert-danger {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(220, 38, 38, 0.1) 100%) !important;
+            color: var(--text-primary) !important;
+            border-left: 4px solid var(--danger-red) !important;
+        }
+
+        /* Melhorias para Progress Bars */
+        .progress {
+            background: var(--bg-darker) !important;
+            border-radius: 8px !important;
+            height: 12px;
+            overflow: hidden;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2) !important;
+        }
+
+        .progress-bar {
+            border-radius: 8px !important;
+            background: linear-gradient(135deg, var(--primary-blue) 0%, var(--primary-blue-dark) 100%) !important;
+            transition: width 0.6s ease;
+        }
+
+        /* Responsivo melhorado */
+        @media (max-width: 768px) {
+            .modal-dialog {
+                max-width: 95% !important;
+                margin: 1rem auto !important;
+                min-height: calc(100vh - 2rem);
+            }
+
+            .modal-content {
+                max-height: 95vh;
+                border-radius: 12px !important;
+            }
+
+            .modal-header, .modal-footer {
+                padding: 1rem 1.5rem !important;
+            }
+
+            .modal-body {
+                max-height: 75vh;
+                padding: 1.5rem !important;
+            }
+
+            .card {
+                margin-bottom: 1rem;
+                border-radius: 8px !important;
+            }
+
+            .card-header, .card-body {
+                padding: 1rem !important;
+            }
+
+            .btn {
+                padding: 0.6rem 1.2rem !important;
+                font-size: 0.8rem;
+            }
         }
     </style>
 </head>
@@ -748,6 +1195,18 @@
                     </div>
 
                     <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="enableQuestionRefinement">
+                            <label class="form-check-label" for="enableQuestionRefinement">
+                                Ativar Question Refinement (GPT-4o)
+                            </label>
+                        </div>
+                        <div class="form-text">
+                            Usa GPT-4o para melhorar clareza da pergunta sem alterar lógica
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
                         <label class="form-label">Número de Iterações</label>
                         <input type="number" id="iterations" class="form-control form-control-sm" 
                                value="5" min="1" max="100">
@@ -797,7 +1256,7 @@
                                 <div id="sessionStatus" class="status-badge status-idle">
                                     <i class="fas fa-circle"></i> Aguardando
                                 </div>
-                                <button id="refreshDashboard" class="btn btn-outline-primary btn-sm">
+                                <button id="refreshDashboard" class="btn btn-outline-primary" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; display: flex; align-items: center; justify-content: center;" onclick="location.reload()">
                                     <i class="fas fa-sync-alt"></i>
                                 </button>
                             </div>
@@ -872,13 +1331,13 @@
                                 </div>
                                 <div class="col-md-6">
                                     <div class="d-grid gap-2">
-                                        <button id="cancelCurrentBtn" class="btn btn-warning btn-sm" onclick="cancelCurrentTest()">
+                                        <button id="cancelCurrentBtn" class="btn bg-opacity-100 btn-sm text-white" onclick="cancelCurrentTest()">
                                             <i class="fas fa-stop"></i> Cancelar Teste Atual
                                         </button>
-                                        <button id="skipStuckBtn" class="btn btn-danger btn-sm" onclick="skipStuckTests()">
+                                        <button id="skipStuckBtn" class="btn bg-opacity-100 btn-sm text-white" onclick="skipStuckTests()">
                                             <i class="fas fa-forward"></i> Pular Testes Travados (>2min)
                                         </button>
-                                        <button id="cancelAllBtn" class="btn btn-dark btn-sm" onclick="cancelAllTests()">
+                                        <button id="cancelAllBtn" class="btn bg-opacity-100 btn-sm text-white" onclick="cancelAllTests()">
                                             <i class="fas fa-ban"></i> Cancelar Todos os Testes
                                         </button>
                                     </div>

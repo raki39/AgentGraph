@@ -14,6 +14,7 @@ from nodes.agent_node import (
     should_refine_response,
     should_generate_graph,
     should_use_processing_agent,
+    should_refine_question,
     route_after_cache_check
 )
 from nodes.csv_processing_node import csv_processing_node
@@ -49,6 +50,7 @@ from nodes.connection_selection_node import (
     route_by_connection_type
 )
 from nodes.postgresql_connection_node import postgresql_connection_node
+from nodes.question_refinement_node import question_refinement_node, route_after_question_refinement
 from agents.sql_agent import SQLAgentManager
 from agents.tools import CacheManager
 from utils.database import create_sql_database
@@ -103,7 +105,8 @@ class AgentGraphManager:
             self.db_id = self.object_manager.store_database(db)
 
             # Cria agente SQL (modo padrão multi-tabela)
-            self.sql_agent = SQLAgentManager(db, single_table_mode=False, selected_table=None)
+            from utils.config import DEFAULT_TOP_K
+            self.sql_agent = SQLAgentManager(db, single_table_mode=False, selected_table=None, top_k=DEFAULT_TOP_K)
 
             # Armazena objetos no gerenciador
             self.agent_id = self.object_manager.store_sql_agent(self.sql_agent, self.db_id)
@@ -146,6 +149,9 @@ class AgentGraphManager:
             workflow.add_node("validate_input", validate_query_input_node)
             workflow.add_node("check_cache", check_cache_node)
 
+            # Adiciona nó de refinamento de pergunta
+            workflow.add_node("question_refinement", question_refinement_node)
+
             # Adiciona nós de conexão
             workflow.add_node("connection_selection", connection_selection_node)
             workflow.add_node("validate_connection", validate_connection_input_node)
@@ -180,16 +186,20 @@ class AgentGraphManager:
             # Fluxo principal
             workflow.add_edge("validate_input", "check_cache")
 
-            # Condicional para cache hit ou processing/conexão
+            # Condicional para cache hit ou refinamento de pergunta
             workflow.add_conditional_edges(
                 "check_cache",
                 route_after_cache_check,
                 {
                     "update_history": "update_history",
+                    "question_refinement": "question_refinement",
                     "validate_processing": "validate_processing",
                     "connection_selection": "connection_selection"
                 }
             )
+
+            # Fluxo do refinamento de pergunta
+            workflow.add_edge("question_refinement", "validate_processing")
 
             # Fluxo do Processing Agent
             workflow.add_edge("validate_processing", "process_initial_context")
@@ -264,10 +274,12 @@ class AgentGraphManager:
         advanced_mode: bool = False,
         processing_enabled: bool = False,
         processing_model: str = "GPT-4o-mini",
+        question_refinement_enabled: bool = False,
         connection_type: str = "csv",
         postgresql_config: Optional[Dict] = None,
         selected_table: str = None,
         single_table_mode: bool = False,
+        top_k: int = 10,
         thread_id: str = "default"
     ) -> Dict[str, Any]:
         """
@@ -299,7 +311,7 @@ class AgentGraphManager:
                 if db_id:
                     db = self.object_manager.get_database(db_id)
                     if db:
-                        new_sql_agent = SQLAgentManager(db, selected_model, single_table_mode=False, selected_table=None)
+                        new_sql_agent = SQLAgentManager(db, selected_model, single_table_mode=False, selected_table=None, top_k=top_k)
                         self.agent_id = self.object_manager.store_sql_agent(new_sql_agent, db_id)
                         logging.info(f"Agente SQL recriado com sucesso para modelo {selected_model}")
                     else:
@@ -355,6 +367,16 @@ class AgentGraphManager:
                 "processing_result": None,
                 "processing_success": False,
                 "processing_error": None,
+                # Campos relacionados ao Question Refinement
+                "question_refinement_enabled": question_refinement_enabled,
+                "original_user_input": None,
+                "refined_question": None,
+                "question_refinement_applied": False,
+                "question_refinement_changes": [],
+                "question_refinement_justification": None,
+                "question_refinement_success": False,
+                "question_refinement_error": None,
+                "question_refinement_has_significant_change": False,
                 # Campos relacionados ao refinamento
                 "refined": False,
                 "refinement_error": None,
@@ -370,7 +392,9 @@ class AgentGraphManager:
                 "single_table_mode": single_table_mode,
                 "connection_success": self.db_id is not None,  # True se já tem conexão
                 "connection_error": None,
-                "connection_info": None
+                "connection_info": None,
+                # Configuração do agente SQL
+                "top_k": top_k
             }
             
             # Executa o grafo
@@ -389,6 +413,65 @@ class AgentGraphManager:
                 "error": error_msg,
                 "execution_time": 0.0
             }
+
+    async def force_recreate_sql_agent(self, top_k: int = 10) -> Dict[str, Any]:
+        """
+        Força a recriação do agente SQL com novo TOP_K
+
+        Args:
+            top_k: Novo valor de TOP_K
+
+        Returns:
+            Resultado da operação
+        """
+        try:
+            logging.info(f"[FORCE_RECREATE] Forçando recriação do agente SQL com TOP_K={top_k}")
+
+            # Recupera banco de dados atual
+            db_id = self.object_manager.get_db_id_for_agent(self.agent_id)
+            if not db_id:
+                return {"success": False, "message": "Banco de dados não encontrado"}
+
+            db = self.object_manager.get_database(db_id)
+            if not db:
+                return {"success": False, "message": "Objeto de banco de dados não encontrado"}
+
+            # Recupera agente atual para manter configurações
+            current_agent = self.object_manager.get_sql_agent(self.agent_id)
+            if current_agent:
+                model_name = current_agent.model_name
+                single_table_mode = current_agent.single_table_mode
+                selected_table = current_agent.selected_table
+            else:
+                model_name = "gpt-4o-mini"
+                single_table_mode = False
+                selected_table = None
+
+            # Cria novo agente SQL com TOP_K atualizado
+            new_sql_agent = SQLAgentManager(
+                db=db,
+                model_name=model_name,
+                single_table_mode=single_table_mode,
+                selected_table=selected_table,
+                top_k=top_k
+            )
+
+            # Atualiza no ObjectManager
+            self.agent_id = self.object_manager.store_sql_agent(new_sql_agent, db_id)
+
+            logging.info(f"[FORCE_RECREATE] Agente SQL recriado com sucesso - Modelo: {model_name}, TOP_K: {top_k}")
+
+            return {
+                "success": True,
+                "message": f"Agente SQL recriado com TOP_K={top_k}",
+                "top_k": top_k,
+                "model": model_name
+            }
+
+        except Exception as e:
+            error_msg = f"Erro ao forçar recriação do agente SQL: {e}"
+            logging.error(error_msg)
+            return {"success": False, "message": error_msg}
     
     async def handle_csv_upload(self, file_path: str) -> Dict[str, Any]:
         """
@@ -432,7 +515,8 @@ class AgentGraphManager:
                 # Cria novo agente SQL (modo padrão multi-tabela)
                 new_engine = self.object_manager.get_engine(self.engine_id)
                 new_db = self.object_manager.get_database(self.db_id)
-                new_sql_agent = SQLAgentManager(new_db, single_table_mode=False, selected_table=None)
+                top_k = state.get("top_k", 10)  # Obtém top_k do estado
+                new_sql_agent = SQLAgentManager(new_db, single_table_mode=False, selected_table=None, top_k=top_k)
 
                 # Atualiza agente
                 self.agent_id = self.object_manager.store_sql_agent(new_sql_agent, self.db_id)
@@ -495,11 +579,13 @@ class AgentGraphManager:
                 selected_table = state.get("selected_table")
                 selected_model = state.get("selected_model", "gpt-4o-mini")
 
+                top_k = state.get("top_k", 10)  # Obtém top_k do estado
                 new_sql_agent = SQLAgentManager(
                     new_db,
                     selected_model,
                     single_table_mode=single_table_mode,
-                    selected_table=selected_table
+                    selected_table=selected_table,
+                    top_k=top_k
                 )
 
                 # Atualiza agente
