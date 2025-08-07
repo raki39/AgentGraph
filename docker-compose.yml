@@ -53,8 +53,8 @@ services:
       - CELERY_ENABLED=true
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - CELERY_WORKER_CONCURRENCY=8
-      - CELERY_WORKER_COUNT=1
+      - CELERY_WORKER_CONCURRENCY=4
+      - CELERY_WORKER_COUNT=2
       - FLOWER_PORT=5555
       # Força pool prefork no Docker
       - CELERY_POOL=prefork

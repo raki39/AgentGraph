@@ -29,22 +29,77 @@ celery_app = Celery(
 )
 
 # Configurações do Celery (sem worker_pool - definido no comando)
-celery_app.conf.update(
-    task_serializer='json',
-    accept_content=['json'],
-    result_serializer='json',
-    timezone='UTC',
-    enable_utc=True,
-    task_track_started=True,
-    task_time_limit=30 * 60,  # 30 minutos
-    task_soft_time_limit=25 * 60,  # 25 minutos
-    worker_prefetch_multiplier=1,
-    worker_max_tasks_per_child=1000,
-    # Configurações para evitar erros de dispatcher
-    worker_send_task_events=False,
-    task_send_sent_event=False,
-    worker_disable_rate_limits=True,
-)
+if is_docker_environment():
+    # Docker: Configurações permissivas para tabelas grandes
+    celery_app.conf.update(
+        # Serialização
+        task_serializer='json',
+        accept_content=['json'],
+        result_serializer='json',
+
+        # Timezone
+        timezone='UTC',
+        enable_utc=True,
+
+        # Task tracking
+        task_track_started=True,
+
+        # Timeouts estendidos para tabelas grandes
+        task_time_limit=120 * 60,  # 120 minutos (2 horas)
+        task_soft_time_limit=110 * 60,  # 110 minutos
+
+        # Worker configuration
+        worker_prefetch_multiplier=1,  # Uma task por vez para evitar sobrecarga
+        worker_max_tasks_per_child=50,  # Reinicia worker após 50 tasks
+        worker_disable_rate_limits=True,
+
+        # Task acknowledgment - configurações para reliability
+        task_acks_late=True,  # Confirma apenas após conclusão
+        task_acks_on_failure_or_timeout=True,  # Confirma mesmo em falha
+        task_reject_on_worker_lost=True,  # Rejeita se worker morrer
+
+        # Events (desabilitados para performance)
+        worker_send_task_events=False,
+        task_send_sent_event=False,
+
+        # Result backend
+        result_expires=24 * 60 * 60,  # Resultados expiram em 24h
+        result_backend_always_retry=True,  # Retry em erros recuperáveis
+        result_backend_max_retries=10,  # Máximo 10 retries
+    )
+    logging.info("[CELERY_CONFIG] Configuração Docker permissiva aplicada (120min timeout)")
+else:
+    # Windows: Configurações padrão
+    celery_app.conf.update(
+        # Serialização
+        task_serializer='json',
+        accept_content=['json'],
+        result_serializer='json',
+
+        # Timezone
+        timezone='UTC',
+        enable_utc=True,
+
+        # Task tracking
+        task_track_started=True,
+
+        # Timeouts padrão
+        task_time_limit=30 * 60,  # 30 minutos
+        task_soft_time_limit=25 * 60,  # 25 minutos
+
+        # Worker configuration
+        worker_prefetch_multiplier=1,
+        worker_max_tasks_per_child=1000,
+        worker_disable_rate_limits=True,
+
+        # Events (desabilitados para performance)
+        worker_send_task_events=False,
+        task_send_sent_event=False,
+
+        # Result backend
+        result_expires=24 * 60 * 60,  # Resultados expiram em 24h
+    )
+    logging.info("[CELERY_CONFIG] Configuração Windows padrão aplicada (30min timeout)")
 
 # Log configuração aplicada
 env_info = get_environment_info()

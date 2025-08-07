@@ -46,8 +46,10 @@ docker-compose down
 echo "🔨 Construindo imagem Docker..."
 docker-compose build
 
-echo "🚀 Iniciando AgentGraph com Redis + Celery (1 worker x 8 concurrency)..."
-echo "🔥 Gradio sem fila - Múltiplas requisições simultâneas (50 threads)"
+echo "🚀 Iniciando AgentGraph com Redis + Celery (2 workers x 4 concurrency = 8 processos)..."
+echo "🔥 Gradio sem fila - Concorrência ilimitada para múltiplos usuários"
+echo "⏱️ Celery configurado para tabelas grandes (120min timeout)"
+echo "🛡️ Configurações de reliability e fault tolerance habilitadas"
 echo ""
 echo "📊 Serviços disponíveis:"
 echo "   - AgentGraph: http://localhost:7860 (sem fila)"

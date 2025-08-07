@@ -197,37 +197,50 @@ def start_celery_worker():
         worker_name = f"worker-{int(time.time())}@agentgraph"
 
         if is_docker_environment():
-            # Configuração para Docker - worker único com alta concorrência
-            logging.info(f"[CELERY] Iniciando worker Docker com {CELERY_WORKER_CONCURRENCY} concurrency")
+            # Configuração para Docker - múltiplos workers
+            logging.info(f"[CELERY] Iniciando {CELERY_WORKER_COUNT} workers Docker com {CELERY_WORKER_CONCURRENCY} concurrency cada")
 
             # Pool baseado na variável de ambiente ou padrão
             pool_type = os.getenv("CELERY_POOL", "prefork")
 
-            cmd = [
-                sys.executable, "-m", "celery",
-                "-A", "tasks",
-                "worker",
-                f"--concurrency={CELERY_WORKER_CONCURRENCY}",
-                f"--hostname={worker_name}",
-                "--loglevel=INFO",
-                f"--pool={pool_type}",  # Pool dinâmico
-                "--without-gossip",  # Desabilita gossip
-                "--without-mingle",  # Desabilita mingle
-                "--events"  # Habilita events explicitamente
-            ]
+            # Inicia múltiplos workers
+            celery_worker_processes = []
+
+            for worker_id in range(CELERY_WORKER_COUNT):
+                worker_name_multi = f"worker-{worker_id}-{int(time.time())}@agentgraph"
+
+                cmd = [
+                    sys.executable, "-m", "celery",
+                    "-A", "tasks",
+                    "worker",
+                    f"--concurrency={CELERY_WORKER_CONCURRENCY}",
+                    f"--hostname={worker_name_multi}",
+                    "--loglevel=INFO",
+                    f"--pool={pool_type}",  # Pool dinâmico
+                    "--without-gossip",  # Desabilita gossip
+                    "--without-mingle",  # Desabilita mingle
+                    "--events"  # Habilita events explicitamente
+                ]
+
+                logging.info(f"[CELERY] Iniciando worker {worker_id+1}/{CELERY_WORKER_COUNT}: {worker_name_multi}")
+
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    cwd=os.getcwd(),
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True
+                )
+
+                celery_worker_processes.append(process)
+
+            # Usa o primeiro processo para logs (compatibilidade)
+            celery_worker_process = celery_worker_processes[0] if celery_worker_processes else None
 
             logging.info(f"[CELERY] Pool configurado: {pool_type}")
-            logging.info(f"[CELERY] Comando Docker: {' '.join(cmd)}")
-
-            celery_worker_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                cwd=os.getcwd(),
-                text=True,
-                bufsize=1,
-                universal_newlines=True
-            )
+            logging.info(f"[CELERY] Total: {CELERY_WORKER_COUNT} workers x {CELERY_WORKER_CONCURRENCY} concurrency = {CELERY_WORKER_COUNT * CELERY_WORKER_CONCURRENCY} processos")
 
         else:
             # Configuração para Windows - single worker com solo pool
@@ -1740,17 +1753,29 @@ def create_interface():
                     "**Modo Multi-Tabela ativo** - Pode usar todas as tabelas e fazer JOINs"
                 )
 
+        # Configuração de concorrência baseada no ambiente
+        if is_docker_environment():
+            # Docker: Alta concorrência sem fila
+            concurrency_limit = None  # Sem limite
+            logging.info("[GRADIO] Docker - Configurando alta concorrência sem limite")
+        else:
+            # Windows: Concorrência limitada para estabilidade
+            concurrency_limit = 1
+            logging.info("[GRADIO] Windows - Configurando concorrência limitada")
+
         msg.submit(
             handle_response_with_graph,
             inputs=[msg, chatbot, model_selector, advanced_checkbox, processing_checkbox, processing_model_selector, connection_type, pg_host, pg_port, pg_database, pg_username, pg_password, pg_table_selector, pg_single_table_mode, top_k_input],
             outputs=[msg, chatbot, graph_image, create_table_btn],
-            show_progress=True  # Mostra carregamento no input do chat
+            show_progress=True,  # Mostra carregamento no input do chat
+            concurrency_limit=concurrency_limit
         )
 
         btn.click(
             handle_response_with_graph,
             inputs=[msg, chatbot, model_selector, advanced_checkbox, processing_checkbox, processing_model_selector, connection_type, pg_host, pg_port, pg_database, pg_username, pg_password, pg_table_selector, pg_single_table_mode, top_k_input],
-            outputs=[msg, chatbot, graph_image, create_table_btn]
+            outputs=[msg, chatbot, graph_image, create_table_btn],
+            concurrency_limit=concurrency_limit
         )
 
         # Conecta botão de aplicar TOP_K
