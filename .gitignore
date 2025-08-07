@@ -12,6 +12,9 @@ tabela.csv
 # Logs
 *.log
 logs/
+
+# Redis Windows
+redis-windows/
 __pycache__/
 *.py[cod]
 *$py.class

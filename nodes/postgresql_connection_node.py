@@ -143,7 +143,7 @@ async def postgresql_connection_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "database": database,
             "username": username,
             "table_count": len(table_names),
-            "tables": table_names[:50],  # Primeiras 10 tabelas
+            "tables": table_names[:1000],  # Primeiras 10 tabelas
             "connection_time": connection_time,
             "engine_id": engine_id,
             "db_id": db_id
