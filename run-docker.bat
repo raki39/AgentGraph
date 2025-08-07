@@ -46,9 +46,10 @@ echo 🔨 Construindo imagem Docker...
 docker-compose build
 
 echo 🚀 Iniciando AgentGraph com Redis + Celery (1 worker x 8 concurrency)...
+echo 🔥 Gradio sem fila - Múltiplas requisições simultâneas (50 threads)
 echo.
 echo 📊 Serviços disponíveis:
-echo    - AgentGraph: http://localhost:7860
+echo    - AgentGraph: http://localhost:7860 (sem fila)
 echo    - Flower Dashboard: http://localhost:5555 (admin/admin)
 echo    - Redis: localhost:6379
 echo.

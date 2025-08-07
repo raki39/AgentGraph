@@ -58,6 +58,9 @@ services:
       - FLOWER_PORT=5555
       # Força pool prefork no Docker
       - CELERY_POOL=prefork
+      # Configurações do Gradio para Docker
+      - GRADIO_ENABLE_QUEUE=false
+      - GRADIO_MAX_THREADS=50
     volumes:
       # Persistir apenas uploads
       - ./uploaded_data:/app/uploaded_data
