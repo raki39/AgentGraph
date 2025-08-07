@@ -59,7 +59,6 @@ services:
       # Força pool prefork no Docker
       - CELERY_POOL=prefork
       # Configurações do Gradio para Docker
-      - GRADIO_ENABLE_QUEUE=false
       - GRADIO_MAX_THREADS=50
     volumes:
       # Persistir apenas uploads

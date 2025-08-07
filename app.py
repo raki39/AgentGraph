@@ -1864,28 +1864,31 @@ async def main():
             if GRADIO_SHARE:
                 logging.info("🌐 Configurando link público do Gradio...")
 
-            # Configurações de fila baseadas no ambiente
-            enable_queue = True  # Padrão para Windows
-            max_threads = 1      # Padrão para Windows
-
+            # Configurações baseadas no ambiente
             if is_docker_environment():
-                # Docker: Desabilita fila e permite múltiplas threads
-                enable_queue = os.getenv("GRADIO_ENABLE_QUEUE", "false").lower() == "true"
+                # Docker: Configurações para alta concorrência
                 max_threads = int(os.getenv("GRADIO_MAX_THREADS", "50"))
-                logging.info(f"[GRADIO] Docker - Queue: {enable_queue}, Max threads: {max_threads}")
-            else:
-                # Windows: Mantém fila habilitada para estabilidade
-                logging.info(f"[GRADIO] Windows - Queue: {enable_queue}, Max threads: {max_threads}")
+                logging.info(f"[GRADIO] Docker - Max threads: {max_threads}")
 
-            demo.launch(
-                server_name=server_name,
-                server_port=port if port != 0 else None,
-                share=GRADIO_SHARE,
-                show_error=True,
-                quiet=False,
-                enable_queue=enable_queue,
-                max_threads=max_threads
-            )
+                demo.launch(
+                    server_name=server_name,
+                    server_port=port if port != 0 else None,
+                    share=GRADIO_SHARE,
+                    show_error=True,
+                    quiet=False,
+                    max_threads=max_threads
+                )
+            else:
+                # Windows: Configurações padrão
+                logging.info(f"[GRADIO] Windows - Configurações padrão")
+
+                demo.launch(
+                    server_name=server_name,
+                    server_port=port if port != 0 else None,
+                    share=GRADIO_SHARE,
+                    show_error=True,
+                    quiet=False
+                )
             break  # Se chegou aqui, deu certo
         except OSError as e:
             if "Cannot find empty port" in str(e) and port != ports_to_try[-1]:
