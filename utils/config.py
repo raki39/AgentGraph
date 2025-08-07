@@ -20,6 +20,56 @@ LANGSMITH_TRACING = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
 LANGSMITH_ENDPOINT = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
 LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT", "agentgraph-project")
 
+# Detecção de ambiente
+def is_docker_environment() -> bool:
+    """
+    Detecta se está rodando em ambiente Docker
+
+    Returns:
+        True se estiver em Docker, False caso contrário
+    """
+    # Método 1: Variável de ambiente específica
+    if os.getenv("DOCKER_CONTAINER", "false").lower() == "true":
+        return True
+
+    # Método 2: Verificar se existe arquivo /.dockerenv
+    if os.path.exists("/.dockerenv"):
+        return True
+
+    # Método 3: Verificar cgroup (Linux containers)
+    try:
+        with open("/proc/1/cgroup", "r") as f:
+            content = f.read()
+            if "docker" in content or "containerd" in content:
+                return True
+    except (FileNotFoundError, PermissionError):
+        pass
+
+    return False
+
+# Configurações do Celery (processamento assíncrono)
+CELERY_ENABLED = os.getenv("CELERY_ENABLED", "true").lower() == "true"
+
+# URLs dinâmicas baseadas no ambiente
+if is_docker_environment():
+    # Configurações para Docker
+    CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
+    CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://redis:6379/0")
+    CELERY_WORKER_CONCURRENCY = int(os.getenv("CELERY_WORKER_CONCURRENCY", "8"))  # Alta concorrência para Docker
+    CELERY_WORKER_COUNT = int(os.getenv("CELERY_WORKER_COUNT", "1"))  # Worker único otimizado
+    REDIS_HOST = "redis"
+    REDIS_PORT = 6379
+else:
+    # Configurações para Windows local
+    CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+    CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+    CELERY_WORKER_CONCURRENCY = int(os.getenv("CELERY_WORKER_CONCURRENCY", "1"))  # Single-thread para Windows
+    CELERY_WORKER_COUNT = int(os.getenv("CELERY_WORKER_COUNT", "1"))  # Single worker
+    REDIS_HOST = "localhost"
+    REDIS_PORT = 6379
+
+FLOWER_PORT = int(os.getenv("FLOWER_PORT", "5555"))
+
 # Configurações de arquivos e diretórios
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploaded_data")
 DEFAULT_CSV_PATH = os.getenv("DEFAULT_CSV_PATH", "tabela.csv")
@@ -138,6 +188,47 @@ def get_active_csv_path():
         logging.info(f"[CSV] Usando arquivo CSV padrão: {DEFAULT_CSV_PATH}")
         return DEFAULT_CSV_PATH
 
+def get_environment_info() -> dict:
+    """
+    Retorna informações sobre o ambiente de execução
+
+    Returns:
+        Dicionário com informações do ambiente
+    """
+    is_docker = is_docker_environment()
+
+    return {
+        "is_docker": is_docker,
+        "environment": "Docker" if is_docker else "Windows Local",
+        "redis_url": CELERY_BROKER_URL,
+        "redis_host": REDIS_HOST,
+        "redis_port": REDIS_PORT,
+        "worker_concurrency": CELERY_WORKER_CONCURRENCY,
+        "worker_count": CELERY_WORKER_COUNT,
+        "celery_enabled": CELERY_ENABLED
+    }
+
+def get_redis_connection_url() -> str:
+    """
+    Retorna URL de conexão Redis baseada no ambiente
+
+    Returns:
+        URL de conexão Redis
+    """
+    return CELERY_BROKER_URL
+
+def get_postgresql_host_for_environment() -> str:
+    """
+    Retorna host PostgreSQL apropriado para o ambiente
+
+    Returns:
+        Host PostgreSQL (localhost para Windows, host.docker.internal para Docker)
+    """
+    if is_docker_environment():
+        return "host.docker.internal"  # Permite acesso ao PostgreSQL do host
+    else:
+        return "localhost"
+
 def validate_config():
     """Valida se as configurações necessárias estão presentes."""
     errors = []
@@ -165,6 +256,12 @@ def validate_config():
     if warnings:
         for warning in warnings:
             logging.warning(warning)
+
+    # Log informações do ambiente
+    env_info = get_environment_info()
+    logging.info(f"🌍 Ambiente detectado: {env_info['environment']}")
+    logging.info(f"🔗 Redis URL: {env_info['redis_url']}")
+    logging.info(f"⚙️ Workers: {env_info['worker_count']} x {env_info['worker_concurrency']} concurrency")
 
     logging.info("Configurações validadas com sucesso")
     return True

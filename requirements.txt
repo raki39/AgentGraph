@@ -10,6 +10,11 @@ langchain-core>=0.3.0
 # LangSmith for observability and tracing
 langsmith>=0.1.39
 
+# Celery and Redis for distributed task queue
+celery>=5.3.0
+redis>=5.0.0
+flower>=2.0.0
+
 # Database and Data Processing
 pandas>=2.0.0
 sqlalchemy>=2.0.0

@@ -24,19 +24,20 @@ class QueryState(TypedDict):
 async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Nó principal para processar consulta do usuário
-    
+    AGORA USA CELERY PARA TODAS AS QUERIES SQL
+
     Args:
         state: Estado atual com entrada do usuário
-        
+
     Returns:
-        Estado atualizado com resposta processada
+        Estado atualizado - dispara task Celery em vez de execução direta
     """
     start_time = time.time()
     user_input = state["user_input"]
     selected_model = state["selected_model"]
-    
+
     logging.info(f"[QUERY] Processando: {user_input[:50]}...")
-    
+
     try:
         # Verifica se é saudação
         if is_greeting(user_input):
@@ -146,7 +147,30 @@ async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
                 # Atualiza no ObjectManager
                 obj_manager.store_sql_agent(sql_agent, state.get("db_id"))
-        
+
+        # NOVA LÓGICA: VERIFICAR SE DEVE USAR CELERY
+        use_celery = state.get("use_celery", False)
+
+        # Log simples
+        logging.info(f"[QUERY] use_celery: {use_celery}")
+
+        if use_celery:
+            # MODO CELERY: Preparar estado para dispatch
+            logging.info(f"[QUERY] Modo Celery ativado - Preparando dispatch para Agent ID: {agent_id}")
+
+            state.update({
+                "ready_for_celery_dispatch": True,
+                "celery_user_input": user_input,
+                "celery_agent_id": agent_id,
+                "execution_time": time.time() - start_time
+            })
+
+            logging.info(f"[QUERY] Estado preparado para dispatch Celery")
+            return state
+
+        # MODO TRADICIONAL: Execução direta (lógica original mantida)
+        logging.info(f"[QUERY] Modo tradicional - Executando diretamente")
+
         # Executa query no agente SQL com contexto direto
         sql_result = await sql_agent.execute_query(state["sql_context"])
 
@@ -180,13 +204,14 @@ async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
             # Log apenas se não foi capturada (caso de erro)
             if not sql_query_captured:
                 logging.warning("[QUERY] ⚠️ Nenhuma query SQL foi capturada pelo handler")
-        
+
         # Armazena no cache se disponível
         if cache_manager and sql_result["success"]:
             cache_manager.cache_response(user_input, state["response"])
-        
+
         state["execution_time"] = time.time() - start_time
         logging.info(f"[QUERY] Concluído em {state['execution_time']:.2f}s")
+
         
     except Exception as e:
         error_msg = f"Erro ao processar query: {e}"
@@ -279,3 +304,36 @@ async def prepare_query_context_node(state: Dict[str, Any]) -> Dict[str, Any]:
         })
     
     return state
+
+def should_use_celery_routing(state: Dict[str, Any]) -> str:
+    """
+    Função de roteamento para decidir se deve usar Celery ou execução direta
+
+    Args:
+        state: Estado atual
+
+    Returns:
+        Nome do próximo nó
+    """
+    # Verifica se Celery está habilitado
+    use_celery = state.get("use_celery", False)
+
+    # Verifica se está pronto para dispatch Celery
+    ready_for_celery = state.get("ready_for_celery_dispatch", False)
+
+    # Log simples
+    logging.info(f"[ROUTING] use_celery: {use_celery}, ready: {ready_for_celery}")
+
+    if use_celery and ready_for_celery:
+        logging.info("[ROUTING] ✅ Redirecionando para Celery dispatch")
+        return "celery_dispatch"
+    else:
+        logging.info(f"[ROUTING] ❌ Continuando fluxo tradicional (use_celery={use_celery}, ready={ready_for_celery})")
+        # Verificar se deve gerar gráfico
+        query_type = state.get("query_type", "")
+        if query_type == "sql_query_graphic":
+            return "graph_selection"
+        elif state.get("advanced_mode", False):
+            return "refine_response"
+        else:
+            return "format_response"  # Sempre formatar antes do cache

@@ -113,11 +113,35 @@ GRADIO_PORT=7860
 ```
 
 ### 4. **Execute a Aplicação**
+
+#### **🖥️ Modo Local (Desenvolvimento)**
 ```bash
 python app.py
 ```
 
-🎉 **Pronto!** Acesse `http://localhost:7860` no seu navegador.
+#### **🐳 Modo Docker (Produção)**
+```bash
+# Windows
+run-docker.bat
+
+# Linux/Mac
+./run-docker.sh
+```
+
+🎉 **Pronto!** Acesse:
+- **AgentGraph**: `http://localhost:7860`
+- **Flower Dashboard**: `http://localhost:5555` (apenas Docker)
+
+### **🔧 Diferenças entre Modos**
+
+| Característica | Local (Windows) | Docker (Produção) |
+|----------------|-----------------|-------------------|
+| **Redis** | Iniciado automaticamente | Container Redis |
+| **Celery Workers** | 1 worker (single-thread) | 1 worker x 8 concurrency |
+| **Paralelismo** | Limitado (Windows) | Completo (Linux) |
+| **PostgreSQL** | `localhost` | `host.docker.internal` |
+| **Flower Dashboard** | ❌ | ✅ |
+| **Uso** | Desenvolvimento | Produção/Compartilhamento |
 
 ### 5. **Configure LangSmith (Opcional)**
 Para habilitar observabilidade avançada:

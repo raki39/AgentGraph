@@ -11,6 +11,13 @@ from utils.config import UPLOADED_CSV_PATH, SQL_DB_PATH, DEFAULT_CSV_PATH
 from agents.sql_agent import SQLAgentManager
 from nodes.csv_processing_node import csv_processing_node
 from nodes.database_node import create_database_from_dataframe_node, load_existing_database_node
+from nodes.system_management_node import (
+    toggle_advanced_mode_node,
+    force_recreate_sql_agent_node,
+    get_system_info_node,
+    validate_system_node
+)
+from nodes.cache_node import get_history_node, clear_cache_node
 
 class FileUploadState(TypedDict):
     """Estado para upload de arquivos"""
@@ -61,26 +68,15 @@ async def handle_csv_upload_node(state: FileUploadState) -> FileUploadState:
         if not db_result["success"]:
             raise Exception(db_result["message"])
 
-        # Recupera objetos criados
-        from utils.object_manager import get_object_manager
-        obj_manager = get_object_manager()
-
-        engine = obj_manager.get_engine(db_result["engine_id"])
-        db = obj_manager.get_object(db_result["db_id"])
+        # Atualiza estado com IDs para que o app.py possa atualizar o sistema
+        state.update({
+            "engine_id": db_result["engine_id"],
+            "db_id": db_result["db_id"],
+            "success": True,
+            "message": "✅ CSV carregado com sucesso!"
+        })
 
         logging.info("[UPLOAD] Novo banco carregado e DB atualizado usando nova arquitetura.")
-
-        # Recria agente SQL
-        sql_agent = SQLAgentManager(db)
-        
-        # Limpa cache
-        state["cache_manager"].clear_cache()
-        
-        # Atualiza estado
-        state["engine"] = engine
-        state["sql_agent"] = sql_agent
-        state["success"] = True
-        state["message"] = "✅ CSV carregado com sucesso!"
         
         logging.info("[UPLOAD] Novo banco carregado e agente recriado. Cache limpo.")
         
@@ -271,7 +267,12 @@ class CustomNodeManager:
             "csv_upload": handle_csv_upload_node,
             "system_reset": reset_system_node,
             "system_validation": validate_system_node,
-            "system_info": get_system_info_node
+            "system_info": get_system_info_node,
+            # Novas funções de gerenciamento
+            "toggle_advanced_mode": toggle_advanced_mode_node,
+            "force_recreate_agent": force_recreate_sql_agent_node,
+            "get_history": get_history_node,
+            "clear_cache": clear_cache_node
         }
     
     def get_node_function(self, node_name: str):
@@ -281,11 +282,11 @@ class CustomNodeManager:
     async def execute_node(self, node_name: str, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Executa um nó específico
-        
+
         Args:
             node_name: Nome do nó
             state: Estado atual
-            
+
         Returns:
             Estado atualizado
         """
@@ -295,3 +296,148 @@ class CustomNodeManager:
         else:
             logging.error(f"Nó não encontrado: {node_name}")
             return state
+
+    # Métodos de conveniência para acesso direto aos nós
+    async def toggle_advanced_mode(self, enabled: bool) -> str:
+        """Alterna modo avançado"""
+        state = {"enabled": enabled, "success": False, "message": ""}
+        result = await self.execute_node("toggle_advanced_mode", state)
+        return result.get("message", "Erro ao alternar modo avançado")
+
+    async def get_history(self, cache_id: str) -> list:
+        """Obtém histórico de conversas"""
+        state = {"cache_id": cache_id, "history": []}
+        result = await self.execute_node("get_history", state)
+        return result.get("history", [])
+
+    async def clear_cache(self, cache_id: str) -> bool:
+        """Limpa cache do sistema"""
+        state = {"cache_id": cache_id, "success": False, "message": ""}
+        result = await self.execute_node("clear_cache", state)
+        return result.get("success", False)
+
+    async def force_recreate_agent(self, agent_id: str, top_k: int = 10) -> Dict[str, Any]:
+        """Força recriação do agente SQL"""
+        state = {"top_k": top_k, "agent_id": agent_id, "success": False, "message": ""}
+        return await self.execute_node("force_recreate_agent", state)
+
+    async def get_system_info(self, agent_id: str, engine_id: str, cache_id: str) -> Dict[str, Any]:
+        """Obtém informações do sistema"""
+        state = {
+            "agent_id": agent_id,
+            "engine_id": engine_id,
+            "cache_id": cache_id,
+            "system_info": {}
+        }
+        result = await self.execute_node("system_info", state)
+        return result.get("system_info", {})
+
+    async def validate_system(self, agent_id: str, engine_id: str, cache_id: str) -> Dict[str, Any]:
+        """Valida estado do sistema"""
+        state = {
+            "agent_id": agent_id,
+            "engine_id": engine_id,
+            "cache_id": cache_id,
+            "validation": {}
+        }
+        result = await self.execute_node("system_validation", state)
+        return result.get("validation", {})
+
+    async def handle_csv_upload(self, file_path: str, object_manager) -> Dict[str, Any]:
+        """Processa upload de CSV usando nós específicos"""
+        try:
+            # Etapa 1: Processa CSV
+            csv_state = {
+                "file_path": file_path,
+                "success": False,
+                "message": "",
+                "csv_data_sample": {},
+                "column_info": {},
+                "processing_stats": {}
+            }
+
+            csv_result = await csv_processing_node(csv_state)
+            if not csv_result["success"]:
+                return csv_result
+
+            # Etapa 2: Cria banco de dados
+            db_state = csv_result.copy()
+            db_result = await create_database_from_dataframe_node(db_state)
+            if not db_result["success"]:
+                return db_result
+
+            logging.info("[UPLOAD] Novo banco carregado e DB atualizado usando nova arquitetura.")
+
+            # Retorna resultado com IDs para que o app.py possa atualizar o sistema
+            return {
+                "success": True,
+                "message": "✅ CSV carregado com sucesso!",
+                "engine_id": db_result["engine_id"],
+                "db_id": db_result["db_id"]
+            }
+
+        except Exception as e:
+            error_msg = f"❌ Erro no upload de CSV: {e}"
+            logging.error(f"[ERRO] Falha ao processar novo CSV: {e}")
+            return {
+                "success": False,
+                "message": error_msg
+            }
+
+    async def handle_postgresql_connection(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Processa conexão PostgreSQL usando nós específicos"""
+        try:
+            # Adiciona campos necessários ao estado
+            state.update({
+                "success": False,
+                "message": "",
+                "connection_info": {},
+                "connection_error": None,
+                "connection_success": False
+            })
+
+            # Executa nó de conexão PostgreSQL
+            from nodes.postgresql_connection_node import postgresql_connection_node
+            pg_result = await postgresql_connection_node(state)
+
+            # Retorna resultado com IDs para que o app.py possa atualizar o sistema
+            if pg_result.get("success"):
+                return {
+                    "success": True,
+                    "message": pg_result.get("message", "✅ Conexão PostgreSQL estabelecida!"),
+                    "engine_id": pg_result.get("engine_id"),
+                    "db_id": pg_result.get("db_id"),
+                    "connection_info": pg_result.get("connection_info", {})
+                }
+            else:
+                return pg_result
+
+        except Exception as e:
+            error_msg = f"❌ Erro na conexão PostgreSQL: {e}"
+            logging.error(error_msg)
+            return {
+                "success": False,
+                "message": error_msg
+            }
+
+    async def reset_system(self, engine_id: str, agent_id: str, cache_id: str) -> Dict[str, Any]:
+        """Reseta o sistema ao estado inicial usando nó específico"""
+        try:
+            state = {
+                "success": False,
+                "message": "",
+                "engine_id": engine_id,
+                "agent_id": agent_id,
+                "cache_id": cache_id
+            }
+
+            result = await self.execute_node("system_reset", state)
+            return result
+
+        except Exception as e:
+            error_msg = f"❌ Erro ao resetar sistema: {e}"
+            logging.error(error_msg)
+            return {
+                "success": False,
+                "message": error_msg
+            }

@@ -139,7 +139,7 @@ async def process_initial_context_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     logging.info(f"[PROCESSING NODE] Tabelas encontradas: {available_tables}")
 
                     # Processa cada tabela (máximo 5 para performance)
-                    for table_name in available_tables[:10]:
+                    for table_name in available_tables[:25]:
                         columns_data[table_name] = _extract_table_columns_info(engine, table_name)
 
             else:

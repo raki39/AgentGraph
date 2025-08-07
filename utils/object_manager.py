@@ -1,7 +1,9 @@
 """
 Gerenciador de objetos não-serializáveis para LangGraph
+Integrado com Redis para armazenamento de configurações de agentes
 """
 import uuid
+import json
 from typing import Dict, Any, Optional
 import logging
 
@@ -33,6 +35,41 @@ class ObjectManager:
 
         logging.info(f"Agente SQL armazenado com ID: {agent_id}")
         return agent_id
+
+    def store_agent_config_redis(self, agent_id: str, config: Dict[str, Any]) -> bool:
+        """
+        Armazena configuração do agente no Redis para uso pelo Celery
+
+        Args:
+            agent_id: ID do agente
+            config: Configurações do agente
+
+        Returns:
+            True se salvou com sucesso
+        """
+        try:
+            from tasks import save_agent_config_to_redis
+            return save_agent_config_to_redis(agent_id, config)
+        except Exception as e:
+            logging.error(f"Erro ao salvar configuração no Redis: {e}")
+            return False
+
+    def load_agent_config_redis(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Carrega configuração do agente do Redis
+
+        Args:
+            agent_id: ID do agente
+
+        Returns:
+            Configurações do agente ou None se não encontrado
+        """
+        try:
+            from tasks import load_agent_config_from_redis
+            return load_agent_config_from_redis(agent_id)
+        except Exception as e:
+            logging.error(f"Erro ao carregar configuração do Redis: {e}")
+            return None
     
     def get_sql_agent(self, agent_id: str) -> Optional[Any]:
         """Recupera agente SQL pelo ID"""
@@ -180,6 +217,63 @@ class ObjectManager:
             "agent_db_mappings": len(self._agent_db_mapping),
             "connection_metadata": len(self._connection_metadata)
         }
+
+    def update_global_config(self, key: str, value: Any) -> bool:
+        """
+        Atualiza configuração global no Redis para uso pelo Celery
+
+        Args:
+            key: Chave da configuração (ex: 'top_k')
+            value: Valor da configuração
+
+        Returns:
+            True se atualizou com sucesso
+        """
+        try:
+            import redis
+            from utils.config import REDIS_HOST, REDIS_PORT
+
+            redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=1, decode_responses=True)
+
+            # Salva configuração global
+            config_key = f"global_config:{key}"
+            redis_client.set(config_key, json.dumps(value))
+
+            logging.info(f"[OBJECT_MANAGER] Configuração global atualizada: {key} = {value}")
+            return True
+
+        except Exception as e:
+            logging.error(f"[OBJECT_MANAGER] Erro ao atualizar configuração global {key}: {e}")
+            return False
+
+    def get_global_config(self, key: str, default: Any = None) -> Any:
+        """
+        Obtém configuração global do Redis
+
+        Args:
+            key: Chave da configuração
+            default: Valor padrão se não encontrar
+
+        Returns:
+            Valor da configuração ou default
+        """
+        try:
+            import redis
+            from utils.config import REDIS_HOST, REDIS_PORT
+
+            redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=1, decode_responses=True)
+
+            config_key = f"global_config:{key}"
+            value = redis_client.get(config_key)
+
+            if value is not None:
+                return json.loads(value)
+            else:
+                return default
+
+        except Exception as e:
+            logging.error(f"[OBJECT_MANAGER] Erro ao obter configuração global {key}: {e}")
+            return default
 
 # Instância global do gerenciador
 _object_manager: Optional[ObjectManager] = None

@@ -50,9 +50,19 @@ test_*.py
 data/
 data.db
 
-# Uploads locais (mas manter tabela.csv)
-uploaded_data/
-!tabela.csv
+# Uploads locais (excluir tudo exceto tabela.csv)
+uploaded_data/*
+!uploaded_data/tabela.csv
+
+# Redis local para Windows (não necessário no Docker)
+redis-windows/
+redis-server.exe
+redis-cli.exe
+
+# Celery/Redis arquivos locais
+celerybeat-schedule
+celerybeat.pid
+dump.rdb
 
 # Cache
 .cache/
@@ -61,3 +71,6 @@ uploaded_data/
 # Temporary files
 tmp/
 temp/
+
+# Flower logs
+flower.log

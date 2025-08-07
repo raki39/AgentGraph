@@ -252,9 +252,9 @@ async def detect_column_types(df: pd.DataFrame, sample_size: int = 1000) -> Dict
                 column_info["processing_rules"][col] = "keep_as_float"
             continue
 
-        # Tenta detectar datas de forma mais robusta
+        # Para colunas de texto (object), detecta datas e números
         if sample_col.dtype == 'object':
-            # Tenta detectar datas com múltiplos formatos
+            # Primeiro, tenta detectar datas
             sample_values = sample_col.dropna().head(20)
             date_success_count = 0
 
@@ -298,9 +298,8 @@ async def detect_column_types(df: pd.DataFrame, sample_size: int = 1000) -> Dict
                 column_info["sql_types"][col] = DateTime()
                 column_info["processing_rules"][col] = "parse_dates_advanced"
                 continue
-        
-        # Tenta detectar números em colunas de texto (otimizado)
-        elif sample_col.dtype == 'object':
+
+            # Se não é data, tenta detectar números em colunas de texto (otimizado)
             # Análise otimizada de números em texto
             sample_values = sample_col.dropna().head(50)  # Aumenta amostra para melhor precisão
 
@@ -318,55 +317,29 @@ async def detect_column_types(df: pd.DataFrame, sample_size: int = 1000) -> Dict
                     column_info["numeric_columns"].append(col)
                     column_info["sql_types"][col] = Integer()
                     column_info["processing_rules"][col] = "convert_text_to_int_safe"
+                    logging.debug(f"[TYPE_DETECTION] {col}: Detectado como INTEGER (ratio: {numeric_analysis['numeric_ratio']:.2f})")
                 else:
                     column_info["numeric_columns"].append(col)
                     column_info["sql_types"][col] = Float()
                     column_info["processing_rules"][col] = "convert_text_to_float_safe"
+                    logging.debug(f"[TYPE_DETECTION] {col}: Detectado como FLOAT (ratio: {numeric_analysis['numeric_ratio']:.2f})")
             else:
                 # Mantém como texto
                 column_info["text_columns"].append(col)
                 column_info["sql_types"][col] = String()
                 column_info["processing_rules"][col] = "keep_as_text"
-        
-        # Tenta detectar números em colunas de texto
-        elif df[col].dtype == 'object':
-            # Verifica se pode ser convertido para número
-            sample_values = df[col].dropna().head(20)
-            numeric_count = 0
-            
-            for val in sample_values:
-                try:
-                    # Remove caracteres comuns e tenta converter
-                    clean_val = str(val).replace(',', '.').replace('-', '').strip()
-                    if clean_val:
-                        float(clean_val)
-                        numeric_count += 1
-                except:
-                    pass
-            
-            # Se mais de 70% são números, trata como numérico
-            if len(sample_values) > 0 and numeric_count / len(sample_values) > 0.7:
-                # Verifica se são inteiros ou floats
-                has_decimal = any('.' in str(val) or ',' in str(val) for val in sample_values)
-                if has_decimal:
-                    column_info["numeric_columns"].append(col)
-                    column_info["sql_types"][col] = Float()
-                    column_info["processing_rules"][col] = "convert_text_to_float"
-                else:
-                    column_info["numeric_columns"].append(col)
-                    column_info["sql_types"][col] = Integer()
-                    column_info["processing_rules"][col] = "convert_text_to_int"
-            else:
-                # Mantém como texto
-                column_info["text_columns"].append(col)
-                column_info["sql_types"][col] = String()
-                column_info["processing_rules"][col] = "keep_as_text"
+                logging.debug(f"[TYPE_DETECTION] {col}: Mantido como TEXT (ratio: {numeric_analysis['numeric_ratio']:.2f})")
         else:
             # Outros tipos mantém como texto
             column_info["text_columns"].append(col)
             column_info["sql_types"][col] = String()
             column_info["processing_rules"][col] = "keep_as_text"
-    
+
+    # Log resumo dos tipos detectados
+    logging.info(f"[TYPE_DETECTION] Resumo: {len(column_info['numeric_columns'])} numericas, {len(column_info['date_columns'])} datas, {len(column_info['text_columns'])} texto")
+    if column_info['numeric_columns']:
+        logging.info(f"[TYPE_DETECTION] Colunas numericas: {column_info['numeric_columns']}")
+
     return column_info
 
 async def process_dataframe_generic(df: pd.DataFrame, column_info: Dict[str, Any]) -> pd.DataFrame:
@@ -472,51 +445,6 @@ async def process_convert_numeric_batch(df: pd.DataFrame, convert_columns: List[
                 df[col] = convert_to_float_ultra_optimized(df[col])
         except Exception as e:
             logging.warning(f"Erro ao converter {col}: {e}")
-            if rule == "parse_dates":
-                processed_df[col] = pd.to_datetime(
-                    processed_df[col],
-                    dayfirst=True,
-                    errors='coerce'
-                )
-
-            elif rule == "parse_dates_advanced":
-                # Processamento avançado de datas com múltiplos formatos
-                processed_df[col] = await process_dates_advanced(processed_df[col])
-                
-            elif rule == "keep_as_int":
-                # Já é inteiro, apenas garante tipo correto
-                if processed_df[col].dtype != 'Int64':
-                    processed_df[col] = processed_df[col].astype("Int64")
-
-            elif rule == "keep_as_float":
-                # Já é float, apenas garante tipo correto
-                if processed_df[col].dtype != 'float64':
-                    processed_df[col] = processed_df[col].astype("float64")
-
-            elif rule == "convert_text_to_int_safe":
-                # Conversão otimizada e segura para inteiros
-                processed_df[col] = convert_to_int_optimized(processed_df[col])
-
-            elif rule == "convert_text_to_float_safe":
-                # Conversão otimizada e segura para floats
-                processed_df[col] = convert_to_float_optimized(processed_df[col])
-                
-            elif rule == "keep_as_text":
-                # Mantém como texto, apenas garante que é string
-                processed_df[col] = processed_df[col].astype(str)
-                
-        except Exception as e:
-            logging.warning(f"Erro ao processar coluna {col} com regra {rule}: {e}")
-            # Em caso de erro, mantém coluna original
-            continue
-
-        col_time = time.time() - col_start_time
-        logging.debug(f"[OPTIMIZATION] Coluna {col} processada em {col_time:.2f}s")
-
-    total_time = time.time() - start_time
-    logging.info(f"[OPTIMIZATION] Processamento concluído em {total_time:.2f}s")
-
-    return processed_df
 
 def convert_to_int_optimized(series: pd.Series) -> pd.Series:
     """
@@ -619,28 +547,37 @@ def convert_to_int_ultra_optimized(series: pd.Series) -> pd.Series:
         if valid_mask.any():
             valid_values = str_values[valid_mask]
 
-            # Remove vírgulas e converte
-            cleaned = np.char.replace(valid_values, ',', '.')
+            # Garante que são strings antes de usar np.char
+            if valid_values.dtype.kind in ['U', 'S', 'O']:  # Unicode, bytes ou object
+                # Remove vírgulas e converte
+                cleaned = np.char.replace(valid_values.astype(str), ',', '.')
+            else:
+                # Se não são strings, converte primeiro
+                cleaned = np.char.replace(np.asarray(valid_values, dtype=str), ',', '.')
 
             # Conversão vetorizada
             try:
                 numeric_values = pd.to_numeric(cleaned, errors='coerce')
                 # Só converte se são realmente inteiros
-                int_mask = np.abs(numeric_values - np.round(numeric_values)) < 1e-10
-                int_values = np.round(numeric_values[int_mask]).astype('Int64')
+                valid_numeric = ~np.isnan(numeric_values)
+                if valid_numeric.any():
+                    int_mask = np.abs(numeric_values[valid_numeric] - np.round(numeric_values[valid_numeric])) < 1e-10
+                    int_values = np.round(numeric_values[valid_numeric][int_mask]).astype('Int64')
 
-                # Atribui valores convertidos
-                valid_indices = np.where(valid_mask)[0]
-                int_indices = valid_indices[int_mask]
-                result[int_indices] = int_values
+                    # Atribui valores convertidos
+                    valid_indices = np.where(valid_mask)[0]
+                    numeric_indices = valid_indices[valid_numeric]
+                    int_indices = numeric_indices[int_mask]
+                    result[int_indices] = int_values
 
-            except Exception:
-                pass
+            except Exception as e:
+                logging.debug(f"Erro na conversão vetorizada: {e}")
 
         return pd.Series(result, dtype="Int64")
 
     except Exception as e:
         logging.error(f"Erro na conversão ultra-otimizada para int: {e}")
+        logging.debug(f"Tipo da serie: {series.dtype}, Primeiros valores: {series.head()}")
         return series
 
 def convert_to_float_ultra_optimized(series: pd.Series) -> pd.Series:
@@ -667,8 +604,13 @@ def convert_to_float_ultra_optimized(series: pd.Series) -> pd.Series:
         if valid_mask.any():
             valid_values = str_values[valid_mask]
 
-            # Remove vírgulas (formato brasileiro)
-            cleaned = np.char.replace(valid_values, ',', '.')
+            # Garante que são strings antes de usar np.char
+            if valid_values.dtype.kind in ['U', 'S', 'O']:  # Unicode, bytes ou object
+                # Remove vírgulas (formato brasileiro)
+                cleaned = np.char.replace(valid_values.astype(str), ',', '.')
+            else:
+                # Se não são strings, converte primeiro
+                cleaned = np.char.replace(np.asarray(valid_values, dtype=str), ',', '.')
 
             # Conversão vetorizada ultra-rápida
             numeric_values = pd.to_numeric(cleaned, errors='coerce')
@@ -678,6 +620,7 @@ def convert_to_float_ultra_optimized(series: pd.Series) -> pd.Series:
 
     except Exception as e:
         logging.error(f"Erro na conversão ultra-otimizada para float: {e}")
+        logging.debug(f"Tipo da serie: {series.dtype}, Primeiros valores: {series.head()}")
         return series
 
 def process_dates_vectorized(series: pd.Series) -> pd.Series:

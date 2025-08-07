@@ -25,13 +25,15 @@ COPY agents/ ./agents/
 COPY graphs/ ./graphs/
 COPY nodes/ ./nodes/
 COPY utils/ ./utils/
+COPY tasks.py .
 COPY app.py .
 
 # Copiar arquivo CSV necessário para inicialização
 COPY tabela.csv .
 
-# Criar diretórios necessários
+# Criar diretórios necessários e copiar CSV padrão
 RUN mkdir -p uploaded_data
+COPY tabela.csv ./uploaded_data/
 
 # Expor porta
 EXPOSE 7860

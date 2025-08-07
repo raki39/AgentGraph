@@ -74,41 +74,47 @@ class AgentState(TypedDict):
     connection_error: Optional[str]  # Erro na conexão
     connection_info: Optional[dict]  # Informações da conexão estabelecida
 
+    # Campos relacionados ao Celery
+    use_celery: bool  # Se deve usar Celery para processamento assíncrono
+    ready_for_celery_dispatch: Optional[bool]  # Se está pronto para dispatch Celery
+    celery_task_id: Optional[str]  # ID da task Celery disparada
+    celery_task_status: Optional[str]  # Status da task Celery
+
 
 def should_refine_response(state: Dict[str, Any]) -> str:
     """
     Determina se deve refinar a resposta
-    
+
     Args:
         state: Estado atual
-        
+
     Returns:
         Nome do próximo nó
     """
     if state.get("advanced_mode", False) and not state.get("error"):
         return "refine_response"
     else:
-        return "cache_response"
+        return "format_response"  # Sempre formatar antes do cache
 
 
 def should_generate_graph(state: Dict[str, Any]) -> str:
     """
     Determina se deve gerar gráfico
-    
+
     Args:
         state: Estado atual
-        
+
     Returns:
         Nome do próximo nó
     """
     query_type = state.get("query_type", "")
-    
+
     if query_type == "sql_query_graphic" and not state.get("error"):
         return "graph_selection"
     elif state.get("advanced_mode", False) and not state.get("error"):
         return "refine_response"
     else:
-        return "cache_response"
+        return "format_response"  # Sempre formatar antes do cache
 
 
 def should_use_processing_agent(state: Dict[str, Any]) -> str:
