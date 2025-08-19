@@ -88,14 +88,26 @@ def route_by_connection_type(state: Dict[str, Any]) -> str:
     from utils.object_manager import get_object_manager
     obj_manager = get_object_manager()
 
-    # Verifica se há agentes SQL já criados (indicando sistema inicializado)
-    stats = obj_manager.get_stats()
-    has_sql_agents = stats.get("sql_agents", 0) > 0
-    has_databases = stats.get("databases", 0) > 0
+    # Verifica se há agentes SQL já criados PARA ESTA SESSÃO
+    session_id = state.get("session_id")
+    if session_id:
+        # Verifica se sessão tem objetos próprios
+        session_stats = obj_manager.get_session_stats(session_id)
+        has_session_agents = session_stats.get("sql_agents", 0) > 0
+        has_session_databases = session_stats.get("databases", 0) > 0
 
-    if has_sql_agents and has_databases:
-        logging.info("[CONNECTION_ROUTING] Sistema já inicializado com agentes e bancos, pulando para get_db_sample")
-        return "get_db_sample"
+        if has_session_agents and has_session_databases:
+            logging.info(f"[CONNECTION_ROUTING] Sessão {session_id} já tem agentes e bancos, pulando para get_db_sample")
+            return "get_db_sample"
+    else:
+        # Fallback para verificação global (compatibilidade)
+        stats = obj_manager.get_stats()
+        has_sql_agents = stats.get("sql_agents", 0) > 0
+        has_databases = stats.get("databases", 0) > 0
+
+        if has_sql_agents and has_databases:
+            logging.info("[CONNECTION_ROUTING] Sistema já inicializado com agentes e bancos, pulando para get_db_sample")
+            return "get_db_sample"
 
     # Fallback: verifica IDs específicos
     if db_id and engine_id:

@@ -441,3 +441,88 @@ class CustomNodeManager:
                 "success": False,
                 "message": error_msg
             }
+
+    async def handle_csv_upload_session(self, file_path: str, db_path: str, session_id: str, object_manager) -> Dict[str, Any]:
+        """
+        Processa upload de CSV para sessão específica
+
+        Args:
+            file_path: Caminho do arquivo CSV
+            db_path: Caminho do banco SQLite da sessão
+            session_id: ID da sessão
+            object_manager: Gerenciador de objetos
+
+        Returns:
+            Resultado do processamento
+        """
+        try:
+            logging.info(f"[CUSTOM_NODES] Processando CSV para sessão {session_id}: {file_path}")
+
+            # Processa CSV usando nós existentes ADAPTADO PARA SESSÃO
+            from nodes.csv_processing_node import csv_processing_node
+            from nodes.database_node import create_database_from_dataframe_node
+            from utils.database import create_sql_database
+            from sqlalchemy import create_engine
+            from agents.sql_agent import SQLAgentManager
+            from agents.tools import CacheManager  # IMPORT CORRETO
+
+            # Etapa 1: Processa CSV
+            csv_state = {
+                "file_path": file_path,
+                "success": False,
+                "message": "",
+                "csv_data_sample": {},
+                "column_info": {},
+                "processing_stats": {}
+            }
+
+            csv_result = await csv_processing_node(csv_state)
+            if not csv_result["success"]:
+                return {
+                    "success": False,
+                    "message": f"Erro no processamento CSV: {csv_result.get('message', 'Erro desconhecido')}",
+                    "engine_id": None,
+                    "db_id": None
+                }
+
+            # Etapa 2: Cria banco de dados da sessão
+            # Modifica temporariamente o SQL_DB_PATH para a sessão
+            from utils.config import SQL_DB_PATH
+            import utils.config
+
+            original_sql_path = utils.config.SQL_DB_PATH
+            utils.config.SQL_DB_PATH = db_path
+
+            try:
+                db_result = await create_database_from_dataframe_node(csv_result)
+                if not db_result["success"]:
+                    return {
+                        "success": False,
+                        "message": f"Erro ao criar banco: {db_result.get('message', 'Erro desconhecido')}",
+                        "engine_id": None,
+                        "db_id": None
+                    }
+            finally:
+                utils.config.SQL_DB_PATH = original_sql_path
+
+            # Recupera objetos criados
+            engine_id = db_result["engine_id"]
+            db_id = db_result["db_id"]
+
+            logging.info(f"[CUSTOM_NODES] CSV processado para sessão {session_id}: engine_id={engine_id}, db_id={db_id}")
+
+            return {
+                "success": True,
+                "message": f"✅ CSV processado com sucesso para sessão {session_id}",
+                "engine_id": engine_id,
+                "db_id": db_id
+            }
+
+        except Exception as e:
+            logging.error(f"[CUSTOM_NODES] Erro no upload de CSV para sessão {session_id}: {e}")
+            return {
+                "success": False,
+                "message": f"Erro no upload: {str(e)}",
+                "engine_id": None,
+                "db_id": None
+            }

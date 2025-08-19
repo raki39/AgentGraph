@@ -61,8 +61,13 @@ services:
       # Configurações do Gradio para Docker
       - GRADIO_MAX_THREADS=50
     volumes:
-      # Persistir apenas uploads
+      # Persistir dados e sessões
+      - ./data:/data
+      - ./data/sessions:/data/sessions
+      # Persistir apenas uploads (compatibilidade)
       - ./uploaded_data:/app/uploaded_data
+      # Arquivo CSV padrão
+      - ./tabela.csv:/app/tabela.csv
     depends_on:
       redis:
         condition: service_healthy

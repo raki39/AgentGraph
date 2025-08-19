@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, TypedDict
 class AgentState(TypedDict):
     """Estado do agente LangGraph - apenas dados serializáveis"""
     user_input: str
+    session_id: str  # ID da sessão temporária
     selected_model: str
     response: str
     advanced_mode: bool

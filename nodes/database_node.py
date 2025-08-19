@@ -268,14 +268,19 @@ async def get_database_sample_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "shape": sample_df.shape
         }
         
-        state["db_sample_dict"] = db_sample_dict
-        
+        # Atualiza estado preservando session_id
+        state.update({
+            "db_sample_dict": db_sample_dict
+        })
+
         logging.info(f"[DATABASE] Amostra obtida: {sample_df.shape[0]} registros")
-        
+
     except Exception as e:
         error_msg = f"Erro ao obter amostra do banco: {e}"
         logging.error(f"[DATABASE] {error_msg}")
-        state["db_sample_dict"] = {}
-        state["error"] = error_msg
-    
+        state.update({
+            "db_sample_dict": {},
+            "error": error_msg
+        })
+
     return state

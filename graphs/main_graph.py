@@ -323,6 +323,7 @@ class AgentGraphManager:
     async def process_query(
         self,
         user_input: str,
+        session_id: str,
         selected_model: str = "GPT-4o-mini",
         advanced_mode: bool = False,
         processing_enabled: bool = False,
@@ -337,10 +338,11 @@ class AgentGraphManager:
         thread_id: str = "default"
     ) -> Dict[str, Any]:
         """
-        Processa uma query do usuário através do grafo
+        Processa uma query do usuário através do grafo com suporte a sessões
 
         Args:
             user_input: Entrada do usuário
+            session_id: ID da sessão do usuário
             selected_model: Modelo LLM selecionado
             advanced_mode: Se deve usar refinamento avançado
             processing_enabled: Se deve usar o Processing Agent
@@ -380,6 +382,7 @@ class AgentGraphManager:
 
             # Log dos parâmetros recebidos
             logging.info(f"[MAIN GRAPH] ===== INICIANDO PROCESSAMENTO DE QUERY =====")
+            logging.info(f"[MAIN GRAPH] Session ID: {session_id}")
             logging.info(f"[MAIN GRAPH] User input: {user_input}")
             logging.info(f"[MAIN GRAPH] Selected model: {selected_model}")
             logging.info(f"[MAIN GRAPH] Advanced mode: {advanced_mode}")
@@ -392,9 +395,10 @@ class AgentGraphManager:
                 logging.info(f"[MAIN GRAPH] Selected table: {selected_table}")
             logging.info(f"[MAIN GRAPH] Single table mode: {single_table_mode}")
 
-            # Prepara estado inicial com IDs serializáveis
+            # Prepara estado inicial com IDs serializáveis e session_id
             initial_state = {
                 "user_input": user_input,
+                "session_id": session_id,
                 "selected_model": selected_model,
                 "response": "",
                 "advanced_mode": advanced_mode,
@@ -402,7 +406,7 @@ class AgentGraphManager:
                 "error": None,
                 "intermediate_steps": [],
                 "db_sample_dict": {},
-                # IDs para recuperar objetos não-serializáveis
+                # IDs para recuperar objetos não-serializáveis (compatibilidade)
                 "agent_id": self.agent_id,
                 "engine_id": self.engine_id,
                 "db_id": self.db_id,

@@ -1,6 +1,7 @@
 """
 AgentGraph - Aplicação principal com interface Gradio e LangGraph
 Integrado com Celery + Redis + Flower para processamento assíncrono
+Sistema de sessões temporárias para múltiplos usuários
 """
 import asyncio
 import logging
@@ -10,6 +11,9 @@ import os
 import subprocess
 import threading
 import time
+import uuid
+import json
+from typing import Dict, Any, Optional, List, Tuple
 import atexit
 from typing import List, Tuple, Optional, Dict
 from PIL import Image
@@ -38,6 +42,9 @@ from utils.config import (
     REDIS_PORT
 )
 from utils.object_manager import get_object_manager
+from utils.session_manager import get_session_manager
+from utils.session_paths import get_session_paths
+from utils.session_cleanup import start_cleanup_service, get_cleanup_service
 
 # Configuração de logging
 logging.basicConfig(
@@ -51,6 +58,11 @@ show_history_flag = False
 connection_ready = False  # Controla se a conexão está pronta para uso
 chat_blocked = False      # Controla se o chat está bloqueado durante carregamento
 
+# Variáveis globais do sistema de sessões
+session_manager = None
+session_paths = None
+current_session_id = None  # Sessão atual da interface
+
 # Variáveis globais do Celery
 celery_worker_process = None
 flower_process = None
@@ -60,6 +72,84 @@ redis_available = False
 
 # Variável global para armazenar a última SQL query (para criação de tabelas)
 _last_sql_query = None
+
+def initialize_session_system():
+    """Inicializa o sistema de sessões temporárias"""
+    global session_manager, session_paths, current_session_id
+
+    try:
+        logging.info("[SESSION_INIT] Inicializando sistema de sessões...")
+
+        # Inicializa gerenciadores
+        session_manager = get_session_manager()
+        session_paths = get_session_paths()
+
+        # Cria sessão inicial para a interface
+        current_session_id = session_manager.create_session(client_ip="localhost")
+
+        # Inicia serviço de limpeza automática
+        start_cleanup_service()
+
+        logging.info(f"[SESSION_INIT] Sistema de sessões inicializado com sessão: {current_session_id}")
+
+        return True
+
+    except Exception as e:
+        logging.error(f"[SESSION_INIT] Erro ao inicializar sistema de sessões: {e}")
+        return False
+
+def get_or_create_session() -> str:
+    """
+    Retorna session_id atual ou cria nova se necessário
+
+    Returns:
+        session_id: ID da sessão atual
+    """
+    global current_session_id, session_manager
+
+    if not current_session_id or not session_manager:
+        # Inicializa sistema se não estiver pronto
+        if not initialize_session_system():
+            raise Exception("Falha ao inicializar sistema de sessões")
+
+    # Verifica se sessão ainda é válida
+    if session_manager and current_session_id:
+        session_data = session_manager.get_session(current_session_id)
+        if session_data:
+            # Renova sessão
+            session_manager.renew_session(current_session_id)
+            return current_session_id
+
+    # Cria nova sessão se necessário
+    current_session_id = session_manager.create_session(client_ip="localhost")
+    logging.info(f"[SESSION] Nova sessão criada: {current_session_id}")
+
+    return current_session_id
+
+def update_session_config(updates: Dict[str, Any]) -> bool:
+    """
+    Atualiza configurações da sessão atual
+
+    Args:
+        updates: Dicionário com atualizações
+
+    Returns:
+        True se atualizou com sucesso
+    """
+    global session_manager, current_session_id
+
+    try:
+        session_id = get_or_create_session()
+
+        # Se sessões não estão disponíveis, apenas loga e retorna True
+        if session_id == "default" or not session_manager:
+            logging.info(f"[SESSION] Configuração ignorada (sessões não disponíveis): {list(updates.keys())}")
+            return True
+
+        return session_manager.update_session(session_id, updates)
+    except Exception as e:
+        logging.warning(f"[SESSION] Erro ao atualizar configuração: {e}")
+        return True  # Não falha a aplicação
 
 def kill_redis_processes():
     """Finaliza processos Redis existentes"""
@@ -521,8 +611,16 @@ async def initialize_app():
         # Valida configurações
         validate_config()
 
-        # Inicializa sistema Celery (opcional)
+        # Inicializa sistema Celery (que inclui Redis)
         initialize_celery_system()
+
+        # Aguarda um pouco para Redis estar pronto
+        time.sleep(1)
+
+        # Inicializa sistema de sessões APÓS Redis estar rodando
+        if not initialize_session_system():
+            logging.error("Falha ao inicializar sistema de sessões")
+            return False
 
         # Debug: Status final do Celery
         logging.info(f"[INIT] Status final celery_enabled: {celery_enabled}")
@@ -586,13 +684,36 @@ def chatbot_response(user_input: str, selected_model: str, advanced_mode: bool =
         return "❌ Sistema não inicializado. Tente recarregar a página.", None
 
     try:
+        # Obtém sessão atual
+        session_id = get_or_create_session()
+
+        # Atualiza configurações da sessão
+        session_updates = {
+            "selected_model": selected_model,
+            "advanced_mode": advanced_mode,
+            "processing_enabled": processing_enabled,
+            "processing_model": processing_model,
+            "connection_type": connection_type,
+            "single_table_mode": single_table_mode,
+            "selected_table": selected_table,
+            "top_k": top_k,
+            "total_queries": session_manager.get_session(session_id).get("total_queries", 0) + 1
+        }
+
+        if postgresql_config:
+            session_updates["postgresql_config"] = postgresql_config
+
+        update_session_config(session_updates)
+
         # Log simples
+        logging.info(f"[CHATBOT] Sessão: {session_id}")
         logging.info(f"[CHATBOT] Usando Celery: {celery_enabled}")
         logging.info(f"[CHATBOT] 📊 TOP_K para LangGraph: {top_k}")
 
-        # Processa query através do LangGraph
+        # Processa query através do LangGraph com session_id
         result = run_async(graph_manager.process_query(
             user_input=user_input,
+            session_id=session_id,
             selected_model=selected_model,
             advanced_mode=advanced_mode,
             processing_enabled=processing_enabled,
@@ -668,7 +789,7 @@ def save_graph_image_to_temp(graph_image_id: str) -> Optional[str]:
 
 def handle_csv_upload(file) -> str:
     """
-    Processa upload de arquivo csv
+    Processa upload de arquivo CSV com suporte a sessões
 
     Args:
         file: Arquivo enviado pelo Gradio
@@ -685,8 +806,11 @@ def handle_csv_upload(file) -> str:
         return "❌ Nenhum arquivo selecionado."
 
     try:
+        # Obtém sessão atual
+        session_id = get_or_create_session()
+
         # Log detalhado do arquivo recebido
-        logging.info(f"[UPLOAD] Arquivo recebido: {file}")
+        logging.info(f"[UPLOAD] Arquivo recebido para sessão {session_id}: {file}")
         logging.info(f"[UPLOAD] Nome do arquivo: {file.name}")
         logging.info(f"[UPLOAD] Tipo do arquivo: {type(file)}")
 
@@ -722,14 +846,44 @@ def handle_csv_upload(file) -> str:
             logging.info(f"[UPLOAD] Arquivo grande detectado ({size_str}). Processamento pode demorar...")
             return f"⏳ Processando arquivo grande ({size_str}). Aguarde..."
 
-        # Processa upload através do CustomNodeManager
-        logging.info(f"[UPLOAD] Iniciando processamento do arquivo: {file.name}")
-        result = run_async(graph_manager.custom_node_manager.handle_csv_upload(file.name, graph_manager.object_manager))
+        # Copia arquivo para diretório da sessão
+        session_upload_dir = session_paths.get_session_upload_dir(session_id)
+        session_csv_path = os.path.join(session_upload_dir, os.path.basename(file.name))
 
-        # Atualiza IDs do sistema se upload foi bem-sucedido
-        if result.get("success") and result.get("engine_id") and result.get("db_id"):
-            graph_manager.engine_id = result["engine_id"]
-            graph_manager.db_id = result["db_id"]
+        import shutil
+        shutil.copy2(file.name, session_csv_path)
+        logging.info(f"[UPLOAD] Arquivo copiado para sessão: {session_csv_path}")
+
+        # Processa upload através do CustomNodeManager usando caminho da sessão
+        logging.info(f"[UPLOAD] Iniciando processamento do arquivo para sessão {session_id}: {session_csv_path}")
+
+        # Usa db_path específico da sessão
+        session_db_path = session_paths.get_session_db_path(session_id)
+        session_db_uri = session_paths.get_session_db_uri(session_id)
+
+        # Processa CSV para SQLite da sessão
+        result = run_async(graph_manager.custom_node_manager.handle_csv_upload_session(
+            session_csv_path,
+            session_db_path,
+            session_id,
+            graph_manager.object_manager
+        ))
+
+        # Atualiza configuração da sessão se upload foi bem-sucedido
+        if result.get("success"):
+            # Atualiza IDs do sistema (compatibilidade)
+            if result.get("engine_id") and result.get("db_id"):
+                graph_manager.engine_id = result["engine_id"]
+                graph_manager.db_id = result["db_id"]
+
+            # Atualiza configuração da sessão
+            session_updates = {
+                "connection_type": "csv",
+                "db_uri": session_db_uri,
+                "last_upload": file.name,
+                "upload_timestamp": time.time()
+            }
+            update_session_config(session_updates)
 
             # Cria novo agente SQL
             from agents.sql_agent import SQLAgentManager
@@ -738,7 +892,10 @@ def handle_csv_upload(file) -> str:
                 logging.error(f"[UPLOAD] Banco de dados não encontrado com ID: {graph_manager.db_id}")
                 return "❌ Erro: Banco de dados não encontrado após upload"
 
-            top_k = graph_manager.object_manager.get_global_config('top_k', 10)
+            # Usa TOP_K da sessão atual
+            session_id = get_or_create_session()
+            session_data = session_manager.get_session(session_id)
+            top_k = session_data.get('top_k', 10) if session_data else 10
             new_sql_agent = SQLAgentManager(
                 db=new_db,
                 model_name="gpt-4o-mini",
@@ -957,25 +1114,12 @@ def apply_top_k(top_k_value: int) -> str:
         if top_k_value > 10000:
             return "❌ TOP_K muito alto. Máximo permitido: 10.000."
 
-        # Força recriação do agente SQL com novo TOP_K usando nó específico
-        result = run_async(graph_manager.custom_node_manager.force_recreate_agent(
-            agent_id=graph_manager.agent_id,
-            top_k=top_k_value
-        ))
+        # Atualiza TOP_K APENAS na sessão atual (não global)
+        session_id = get_or_create_session()
+        update_session_config({"top_k": top_k_value})
+        logging.info(f"[APPLY_TOP_K] TOP_K {top_k_value} atualizado APENAS na sessão {session_id}")
 
-        if result.get("success", False):
-            # IMPORTANTE: Atualizar TOP_K no ObjectManager para o Celery
-            if hasattr(graph_manager, 'object_manager') and graph_manager.object_manager:
-                try:
-                    # Atualiza configuração global do TOP_K no ObjectManager
-                    graph_manager.object_manager.update_global_config('top_k', top_k_value)
-                    logging.info(f"[APPLY_TOP_K] TOP_K {top_k_value} atualizado no ObjectManager para Celery")
-                except Exception as e:
-                    logging.warning(f"[APPLY_TOP_K] Erro ao atualizar ObjectManager: {e}")
-
-            return f"✅ TOP_K atualizado para {top_k_value}. Agente SQL recriado e configuração salva para Celery."
-        else:
-            return f"❌ Erro ao aplicar TOP_K: {result.get('message', 'Erro desconhecido')}"
+        return f"✅ TOP_K atualizado para {top_k_value} na sessão atual. Próximas queries usarão este valor."
 
     except Exception as e:
         error_msg = f"❌ Erro ao aplicar TOP_K: {e}"
@@ -1146,7 +1290,10 @@ def load_default_csv_and_cleanup_postgresql():
                 logging.error(f"[CSV_DEFAULT] Banco de dados não encontrado com ID: {graph_manager.db_id}")
                 return "❌ Erro: Banco de dados não encontrado após carregamento padrão"
 
-            top_k = graph_manager.object_manager.get_global_config('top_k', 10)
+            # Usa TOP_K da sessão atual
+            session_id = get_or_create_session()
+            session_data = session_manager.get_session(session_id)
+            top_k = session_data.get('top_k', 10) if session_data else 10
             new_sql_agent = SQLAgentManager(
                 db=new_db,
                 model_name="gpt-4o-mini",

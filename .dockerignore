@@ -47,8 +47,13 @@ test_*.py
 
 # Data files que não devem ir para Docker
 *.db
-data/
 data.db
+# Excluir dados de teste mas manter estrutura
+data/*
+!data/.gitkeep
+# Excluir sessões de teste
+data/sessions/*
+!data/sessions/.gitkeep
 
 # Uploads locais (excluir tudo exceto tabela.csv)
 uploaded_data/*

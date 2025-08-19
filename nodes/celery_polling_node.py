@@ -17,88 +17,95 @@ async def celery_task_dispatch_node(state: Dict[str, Any]) -> Dict[str, Any]:
         Estado atualizado com task_id
     """
     try:
-        from tasks import process_sql_query_task, save_agent_config_to_redis
+        from tasks import process_sql_query_task, save_session_config_to_redis
+
+        # Debug: Log do estado recebido
+        logging.info(f"[CELERY_DISPATCH] Estado recebido: {list(state.keys())}")
+        logging.info(f"[CELERY_DISPATCH] user_input: '{state.get('user_input', 'VAZIO')}'")
+        logging.info(f"[CELERY_DISPATCH] celery_user_input: '{state.get('celery_user_input', 'VAZIO')}'")
+        logging.info(f"[CELERY_DISPATCH] session_id: '{state.get('session_id', 'VAZIO')}'")
+
+        # Pega user_input do estado (pode estar em diferentes chaves)
+        user_input = state.get("celery_user_input") or state.get("user_input", "")
+        session_id = state.get("session_id", "")
+
+        if not user_input or not session_id:
+            raise ValueError("user_input e session_id são obrigatórios")
         
-        user_input = state.get("user_input", "")
-        agent_id = state.get("agent_id", "")
-        
-        if not user_input or not agent_id:
-            raise ValueError("user_input e agent_id são obrigatórios")
-        
-        logging.info(f"[CELERY_DISPATCH] Disparando task para agent_id: {agent_id}")
+        logging.info(f"[CELERY_DISPATCH] Disparando task para session_id: {session_id}")
         logging.info(f"[CELERY_DISPATCH] User input: {user_input[:100]}...")
-        
-        # Obter TOP_K atualizado do ObjectManager (se foi alterado via botão APLICAR)
-        from utils.object_manager import get_object_manager
-        object_manager = get_object_manager()
+
+        # Obter TOP_K da SESSÃO (não global)
         state_top_k = state.get('top_k', 10)
-        updated_top_k = object_manager.get_global_config('top_k', state_top_k)
+        logging.info(f"[CELERY_DISPATCH] 📊 TOP_K da sessão: {state_top_k}")
 
-        if updated_top_k != state_top_k:
-            logging.info(f"[CELERY_DISPATCH] 📊 TOP_K atualizado via ObjectManager: {state_top_k} → {updated_top_k}")
-        else:
-            logging.info(f"[CELERY_DISPATCH] 📊 TOP_K do estado: {updated_top_k}")
-
-        # Preparar configuração do agente para o Redis
-        agent_config = {
+        # Preparar configuração da sessão para o Redis
+        session_config = {
+            'session_id': session_id,
+            'tenant_id': state.get('tenant_id', 'default'),
             'connection_type': state.get('connection_type', 'csv'),
             'selected_model': state.get('selected_model', 'gpt-4o-mini'),
-            'top_k': updated_top_k,  # Usa valor atualizado do ObjectManager
+            'top_k': state_top_k,  # Usa valor da sessão
             'advanced_mode': state.get('advanced_mode', False),
             'processing_enabled': state.get('processing_enabled', False),
             'processing_model': state.get('processing_model', 'gpt-4o-mini'),
+            'question_refinement_enabled': state.get('question_refinement_enabled', False),
+            'single_table_mode': state.get('single_table_mode', False),
+            'selected_table': state.get('selected_table'),
             # Adicionar contexto SQL
             'sql_context': state.get('sql_context', ''),
             'suggested_query': state.get('suggested_query', ''),
             'query_observations': state.get('query_observations', ''),
-            'processing_result': state.get('processing_result', '')
+            'processing_result': state.get('processing_result', ''),
+            # Metadados da sessão
+            'version': state.get('version', 1),
+            'last_query': user_input[:100]
         }
 
         # Log simplificado das configurações
-        processing_status = "ATIVO" if agent_config['processing_enabled'] else "DESATIVO"
-        refinement_status = "ATIVO" if agent_config['advanced_mode'] else "DESATIVO"
+        processing_status = "ATIVO" if session_config['processing_enabled'] else "DESATIVO"
+        refinement_status = "ATIVO" if session_config['advanced_mode'] else "DESATIVO"
 
-        logging.info(f"[CELERY_DISPATCH] Config: {agent_config['selected_model']} | {agent_config['connection_type']} | TOP_K={agent_config['top_k']} | Processing={processing_status} | Refinamento={refinement_status}")
+        logging.info(f"[CELERY_DISPATCH] Config: {session_config['selected_model']} | {session_config['connection_type']} | TOP_K={session_config['top_k']} | Processing={processing_status} | Refinamento={refinement_status}")
 
         # Log do contexto apenas se houver
-        sql_context = agent_config.get('sql_context', '')
+        sql_context = session_config.get('sql_context', '')
         if sql_context:
             logging.info(f"[CELERY_DISPATCH] Contexto SQL: {len(str(sql_context))} chars")
 
-        suggested_query = agent_config.get('suggested_query', '')
+        suggested_query = session_config.get('suggested_query', '')
         if suggested_query:
             logging.info(f"[CELERY_DISPATCH] Query Sugerida: {str(suggested_query)[:80]}...")
 
-        query_observations = agent_config.get('query_observations', '')
+        query_observations = session_config.get('query_observations', '')
         if query_observations:
             logging.info(f"[CELERY_DISPATCH] Observacoes: {str(query_observations)[:80]}...")
-        
+
         # Adicionar configurações específicas por tipo de conexão
-        if agent_config['connection_type'] == 'csv':
-            # Para CSV, salvar caminho do arquivo
-            from utils.config import get_active_csv_path
-            agent_config['csv_path'] = get_active_csv_path()
-            
-        elif agent_config['connection_type'] == 'postgresql':
+        if session_config['connection_type'] == 'csv':
+            # Para CSV, usar db_uri específico da sessão
+            from utils.session_paths import get_session_paths
+            session_paths = get_session_paths()
+            session_config['db_uri'] = session_paths.get_session_db_uri(session_id)
+
+        elif session_config['connection_type'] == 'postgresql':
             # Para PostgreSQL, salvar configurações de conexão
-            agent_config['postgresql_config'] = state.get('postgresql_config', {})
-            agent_config['single_table_mode'] = state.get('single_table_mode', False)
-            agent_config['selected_table'] = state.get('selected_table')
-        
-        # Salvar configuração no Redis
-        success = save_agent_config_to_redis(agent_id, agent_config)
+            session_config['postgresql_config'] = state.get('postgresql_config', {})
+
+        # Salvar configuração da sessão no Redis
+        success = save_session_config_to_redis(session_id, session_config)
         if not success:
-            raise Exception("Falha ao salvar configuração do agente no Redis")
-        
-        logging.info(f"[CELERY_DISPATCH] Configuração salva no Redis para {agent_id}")
+            raise Exception("Falha ao salvar configuração da sessão no Redis")
+
+        logging.info(f"[CELERY_DISPATCH] Configuração da sessão salva no Redis para {session_id}")
         
         # Disparar task do Celery e aguardar resultado
         logging.info(f"[CELERY_DISPATCH] Executando task síncrona...")
 
-        task = process_sql_query_task.delay(agent_id, user_input)
+        task = process_sql_query_task.delay(session_id, user_input)
         task_id = task.id
 
-        logging.info(f"[CELERY_DISPATCH] Task {task_id} disparada, aguardando resultado...")
+        logging.info(f"[CELERY_DISPATCH] Task {task_id} disparada para sessão {session_id}, aguardando resultado...")
 
         # Aguardar resultado direto (timeout de 5 minutos)
         try:

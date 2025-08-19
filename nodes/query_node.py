@@ -35,8 +35,11 @@ async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
     start_time = time.time()
     user_input = state["user_input"]
     selected_model = state["selected_model"]
+    session_id = state.get("session_id")
 
     logging.info(f"[QUERY] Processando: {user_input[:50]}...")
+    logging.info(f"[QUERY] Session ID recebido no início: '{session_id}'")
+    logging.info(f"[QUERY] Chaves do estado: {list(state.keys())}")
 
     try:
         # Verifica se é saudação
@@ -156,13 +159,23 @@ async def process_user_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
         if use_celery:
             # MODO CELERY: Preparar estado para dispatch
+            session_id = state.get("session_id")
             logging.info(f"[QUERY] Modo Celery ativado - Preparando dispatch para Agent ID: {agent_id}")
+            logging.info(f"[QUERY] Session ID no estado: '{session_id}'")
 
             state.update({
                 "ready_for_celery_dispatch": True,
                 "celery_user_input": user_input,
                 "celery_agent_id": agent_id,
-                "execution_time": time.time() - start_time
+                "execution_time": time.time() - start_time,
+                # Preserva campos importantes do estado original
+                "session_id": session_id,
+                "top_k": state.get("top_k", 10),
+                "selected_model": state.get("selected_model"),
+                "connection_type": state.get("connection_type"),
+                "advanced_mode": state.get("advanced_mode"),
+                "processing_enabled": state.get("processing_enabled"),
+                "processing_model": state.get("processing_model")
             })
 
             logging.info(f"[QUERY] Estado preparado para dispatch Celery")

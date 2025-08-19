@@ -112,24 +112,226 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
+# Registries de cache por processo do worker (organizados por sessão)
+_AGENT_REGISTRY = {}  # session_id -> {cache_key -> agent}
+_DB_REGISTRY = {}     # session_id -> {cache_key -> database}
+
+def _key_fingerprint(key_tuple: tuple) -> str:
+    """Retorna um fingerprint seguro da chave de cache (SHA1) sem expor segredos."""
+    try:
+        import hashlib
+        # Converte para string estável sem senhas explícitas: mascara db_uri
+        parts = list(key_tuple)
+        # parts[0] is literal "DB" or "AGENT"; the actual fields start at 1
+        # Estrutura esperada: (LABEL, tenant_id, model, connection_type, db_uri_or_path, include_tables_key, top_k)
+        if len(parts) >= 6:
+            db_uri = str(parts[4])
+            if db_uri.startswith("postgresql://") and '@' in db_uri:
+                # mascara senha
+                try:
+                    prefix, rest = db_uri.split('://', 1)
+                    creds, hostdb = rest.split('@', 1)
+                    user, pwd = creds.split(':', 1)
+                    masked = f"{prefix}://{user}:***@{hostdb}"
+                    parts[4] = masked
+                except Exception:
+                    parts[4] = "***"
+        key_str = '|'.join(map(str, parts))
+        return hashlib.sha1(key_str.encode('utf-8')).hexdigest()[:12]
+    except Exception:
+        return "unknown"
+def _sqlite_fingerprint(db_uri: str) -> str:
+    """Gera fingerprint leve (tamanho-mtime) para arquivo SQLite do db_uri."""
+    try:
+        import re, os
+        m = re.match(r"sqlite:///+(.+)", db_uri)
+        if not m:
+            return "unknown"
+        db_path = m.group(1)
+        if not os.path.exists(db_path):
+            return "missing"
+        st = os.stat(db_path)
+        return f"{st.st_size}-{int(st.st_mtime)}"
+    except Exception:
+        return "unknown"
+
+        return "unknown"
+
+
+def _build_db_uri_or_path(agent_config: Dict[str, Any]) -> str:
+    """Monta db_uri_or_path a partir da configuração. Para CSV/SQLite espera 'db_uri' no config."""
+    connection_type = agent_config.get('connection_type', 'csv')
+    if connection_type == 'csv':
+        db_uri = agent_config.get('db_uri')
+        if not db_uri:
+            # Falha explícita orientando ingestão primeiro
+            raise Exception("db_uri ausente para conexão CSV. Realize a ingestão (CSV->SQLite) antes de executar no worker.")
+        return db_uri
+    elif connection_type == 'postgresql':
+        # Usa config explícita ou string db_uri, se existir
+        if agent_config.get('db_uri'):
+            return agent_config['db_uri']
+        pg = agent_config.get('postgresql_config', {})
+        required = ['username', 'password', 'host', 'port', 'database']
+        if not all(k in pg and pg[k] for k in required):
+            raise Exception("Configuração PostgreSQL incompleta. Forneça username, password, host, port, database.")
+        return f"postgresql://{pg['username']}:{pg['password']}@{pg['host']}:{pg['port']}/{pg['database']}"
+    else:
+        raise Exception(f"Tipo de conexão não suportado: {connection_type}")
+
+
+def _generate_cache_key(agent_config: Dict[str, Any]) -> tuple:
+    # NOVO: session_id é o primeiro elemento da chave para isolamento
+    session_id = agent_config.get('session_id', 'global')
+    tenant_id = agent_config.get('tenant_id', 'default')
+    selected_model = agent_config.get('selected_model', 'gpt-4o-mini')
+    connection_type = agent_config.get('connection_type', 'csv')
+    db_uri_or_path = _build_db_uri_or_path(agent_config)
+
+    # include_tables_key: '*' por padrão; se modo tabela única, usa nome da tabela
+    if agent_config.get('single_table_mode') and agent_config.get('selected_table'):
+        include_tables_key = agent_config['selected_table']
+    else:
+        include_tables_key = '*'
+
+    # fingerprint de arquivo para SQLite para refletir mudanças após novo upload
+    if connection_type == 'csv' and str(db_uri_or_path).startswith('sqlite'):
+        sqlite_fp = _sqlite_fingerprint(str(db_uri_or_path))
+    else:
+        sqlite_fp = None
+
+    top_k = agent_config.get('top_k', 10)
+    version = agent_config.get('version', 1)  # NOVO: versão da configuração
+
+    return (session_id, tenant_id, selected_model, connection_type, db_uri_or_path, include_tables_key, sqlite_fp, top_k, version)
+
+
+def _get_or_create_database(agent_config: Dict[str, Any]):
+    """Obtém ou cria SQLDatabase usando db_uri, com cache por sessão."""
+    from utils.database import create_sql_database
+
+    session_id = agent_config.get('session_id', 'global')
+    cache_key = _generate_cache_key(agent_config)
+
+    # Inicializa cache da sessão se não existir
+    if session_id not in _DB_REGISTRY:
+        _DB_REGISTRY[session_id] = {}
+
+    session_cache = _DB_REGISTRY[session_id]
+
+    if cache_key in session_cache:
+        logging.info(f"[CACHE] cache_hit DB para sessão {session_id}, chave {_key_fingerprint(cache_key)}")
+        return session_cache[cache_key]
+
+    # cache miss
+    db_uri = _build_db_uri_or_path(agent_config)
+    logging.info(f"[DB_URI] Abrindo banco via db_uri para sessão {session_id}: {db_uri}")
+
+    # Se for SQLite local, garantir que o arquivo exista ou usar fallback
+    if db_uri.startswith("sqlite"):
+        try:
+            import re, os
+            from utils.config import SQL_DB_PATH
+
+            m = re.match(r"sqlite:///+(.+)", db_uri)
+            if m:
+                db_path = m.group(1)
+                if not os.path.exists(db_path):
+                    # FALLBACK: Se banco da sessão não existe, usa banco padrão
+                    logging.warning(f"[DB_URI] Banco da sessão não encontrado: {db_path}")
+                    logging.info(f"[DB_URI] Usando banco padrão como fallback: {SQL_DB_PATH}")
+
+                    if os.path.exists(SQL_DB_PATH):
+                        db_uri = f"sqlite:///{SQL_DB_PATH}"
+                        logging.info(f"[DB_URI] Fallback aplicado: {db_uri}")
+                    else:
+                        raise Exception(f"Nem banco da sessão nem banco padrão encontrados. Upload um CSV primeiro.")
+        except Exception as e:
+            logging.error(f"[DB_URI] Validação SQLite falhou: {e}")
+            raise
+
+    engine = create_engine(db_uri)
+
+    # Testar conexão rápida
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as e:
+        logging.error(f"[DB_URI] Falha ao conectar em {db_uri}: {e}")
+        raise
+
+    db = create_sql_database(engine)
+    session_cache[cache_key] = db
+    logging.info(f"[CACHE] cache_miss DB para sessão {session_id}; armazenado para chave {_key_fingerprint(cache_key)}")
+    return db
+
+
+def _get_or_create_sql_agent(agent_config: Dict[str, Any]):
+    """Obtém ou cria SQLAgentManager com cache por sessão, preservando ciclo nativo."""
+    from agents.sql_agent import SQLAgentManager
+
+    session_id = agent_config.get('session_id', 'global')
+    cache_key = _generate_cache_key(agent_config)
+
+    # Inicializa cache da sessão se não existir
+    if session_id not in _AGENT_REGISTRY:
+        _AGENT_REGISTRY[session_id] = {}
+
+    session_cache = _AGENT_REGISTRY[session_id]
+
+    if cache_key in session_cache:
+        # Verifica se a versão mudou - se sim, força cache miss
+        cached_agent = session_cache[cache_key]
+        current_version = agent_config.get('version', 1)
+        cached_version = getattr(cached_agent, '_config_version', 1)
+
+        if current_version != cached_version:
+            logging.info(f"[CACHE] Versão mudou ({cached_version} → {current_version}), forçando cache miss para sessão {session_id}")
+            del session_cache[cache_key]
+        else:
+            logging.info(f"[CACHE] cache_hit AGENT para sessão {session_id}, chave {_key_fingerprint(cache_key)}")
+            return session_cache[cache_key]
+
+    # cache miss: cria DB (via cache) e agente
+    db = _get_or_create_database(agent_config)
+    single_table_mode = agent_config.get('single_table_mode', False)
+    selected_table = agent_config.get('selected_table')
+    selected_model = agent_config.get('selected_model', 'gpt-4o-mini')
+    top_k = agent_config.get('top_k', 10)
+
+    agent = SQLAgentManager(
+        db=db,
+        model_name=selected_model,
+        single_table_mode=single_table_mode,
+        selected_table=selected_table,
+        top_k=top_k
+    )
+
+    # Armazena versão da configuração no agente para controle de cache
+    agent._config_version = agent_config.get('version', 1)
+
+    session_cache[cache_key] = agent
+    logging.info(f"[CACHE] cache_miss AGENT para sessão {session_id}; agente criado e armazenado para chave {_key_fingerprint(cache_key)}")
+    return agent
+
 @celery_app.task(bind=True, name='process_sql_query')
-def process_sql_query_task(self, agent_id: str, user_input: str) -> Dict[str, Any]:
+def process_sql_query_task(self, session_id: str, user_input: str) -> Dict[str, Any]:
     """
-    Task principal para processar queries SQL
-    
+    Task principal para processar queries SQL com suporte a sessões
+
     Args:
-        agent_id: ID do agente para carregar configurações do Redis
+        session_id: ID da sessão para carregar configurações do Redis
         user_input: Pergunta do usuário
-        
+
     Returns:
         Dicionário com resultado da execução
     """
     start_time = time.time()
-    
+
     try:
         logging.info(f"[CELERY_TASK] ===== INICIANDO TASK =====")
         logging.info(f"[CELERY_TASK] Task ID: {self.request.id}")
-        logging.info(f"[CELERY_TASK] Agent ID: {agent_id}")
+        logging.info(f"[CELERY_TASK] Session ID: {session_id}")
         logging.info(f"[CELERY_TASK] User input: {user_input[:100]}...")
         logging.info(f"[CELERY_TASK] Timestamp: {time.time()}")
 
@@ -138,36 +340,39 @@ def process_sql_query_task(self, agent_id: str, user_input: str) -> Dict[str, An
         self.update_state(
             state='PROCESSING',
             meta={
-                'status': 'Carregando configurações do agente...',
+                'status': 'Carregando configurações da sessão...',
                 'progress': 10,
-                'agent_id': agent_id
+                'session_id': session_id
             }
         )
         logging.info(f"[CELERY_TASK] Estado inicial atualizado")
-        
-        # 1. Carregar configurações do Redis
-        logging.info(f"[CELERY_TASK] Carregando configurações do Redis para {agent_id}...")
-        agent_config = load_agent_config_from_redis(agent_id)
-        if not agent_config:
-            logging.error(f"[CELERY_TASK] ❌ Configuração não encontrada no Redis!")
-            raise Exception(f"Configuração do agente {agent_id} não encontrada no Redis")
 
-        logging.info(f"[CELERY_TASK] ✅ Configurações carregadas com sucesso")
-        
-        logging.info(f"[CELERY_TASK] Configuração carregada: {agent_config['connection_type']}")
-        
+        # 1. Carregar configurações da sessão do Redis
+        logging.info(f"[CELERY_TASK] Carregando configurações da sessão {session_id}...")
+        session_config = load_session_config_from_redis(session_id)
+        if not session_config:
+            logging.error(f"[CELERY_TASK] ❌ Configuração da sessão não encontrada no Redis!")
+            raise Exception(f"Configuração da sessão {session_id} não encontrada no Redis")
+
+        logging.info(f"[CELERY_TASK] ✅ Configurações da sessão carregadas com sucesso")
+
+        # Adiciona session_id à configuração para uso no cache
+        session_config['session_id'] = session_id
+
+        logging.info(f"[CELERY_TASK] Configuração carregada: {session_config['connection_type']}")
+
         # Atualiza status
         self.update_state(
             state='PROCESSING',
             meta={
-                'status': 'Reconstruindo agente SQL...',
+                'status': 'Preparando agente SQL (cache por sessão)...',
                 'progress': 30,
-                'connection_type': agent_config['connection_type']
+                'connection_type': session_config['connection_type']
             }
         )
-        
-        # 2. Reconstruir SQL Agent baseado no tipo de conexão
-        sql_agent = reconstruct_sql_agent(agent_config)
+
+        # 2. Obter/criar SQL Agent via cache por sessão
+        sql_agent = _get_or_create_sql_agent(session_config)
 
         # Atualiza status
         self.update_state(
@@ -175,13 +380,13 @@ def process_sql_query_task(self, agent_id: str, user_input: str) -> Dict[str, An
             meta={
                 'status': 'Executando query SQL...',
                 'progress': 60,
-                'model': agent_config.get('selected_model', 'gpt-4o-mini')
+                'model': session_config.get('selected_model', 'gpt-4o-mini')
             }
         )
 
         # 3. Executar pipeline do AgentSQL
-        result = execute_sql_pipeline(sql_agent, user_input, agent_config)
-        
+        result = execute_sql_pipeline(sql_agent, user_input, session_config)
+
         # Atualiza status
         self.update_state(
             state='PROCESSING',
@@ -190,27 +395,27 @@ def process_sql_query_task(self, agent_id: str, user_input: str) -> Dict[str, An
                 'progress': 90
             }
         )
-        
+
         execution_time = time.time() - start_time
-        
+
         # 4. Preparar resultado final
         final_result = {
             'status': 'success',
             'sql_query': result.get('sql_query'),
             'response': result.get('output', ''),
             'execution_time': execution_time,
-            'agent_id': agent_id,
-            'connection_type': agent_config['connection_type'],
-            'model_used': agent_config.get('selected_model', 'gpt-4o-mini'),
+            'session_id': session_id,
+            'connection_type': session_config['connection_type'],
+            'model_used': session_config.get('selected_model', 'gpt-4o-mini'),
             'intermediate_steps': result.get('intermediate_steps', [])
         }
 
-        logging.info(f"[CELERY_TASK] Concluido em {execution_time:.2f}s | {agent_config.get('selected_model', 'gpt-4o-mini')}")
+        logging.info(f"[CELERY_TASK] Concluido em {execution_time:.2f}s | {session_config.get('selected_model', 'gpt-4o-mini')}")
         if result.get('sql_query'):
             sql_query_str = str(result.get('sql_query'))
             logging.info(f"[CELERY_TASK] SQL: {sql_query_str[:80]}...")
         return final_result
-        
+
     except Exception as e:
         execution_time = time.time() - start_time
         error_msg = f"Erro no processamento SQL: {str(e)}"
@@ -225,13 +430,159 @@ def process_sql_query_task(self, agent_id: str, user_input: str) -> Dict[str, An
             meta={
                 'error': error_msg,
                 'execution_time': execution_time,
-                'agent_id': agent_id,
+                'session_id': session_id,
                 'exception_type': type(e).__name__
             }
         )
 
         # Levanta a exceção corretamente para o Celery
         raise Exception(error_msg) from e
+
+def load_session_config_from_redis(session_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Carrega configuração da sessão do Redis
+
+    Args:
+        session_id: ID da sessão
+
+    Returns:
+        Dicionário com configurações ou None se não encontrado
+    """
+    import redis
+    from utils.config import REDIS_HOST, REDIS_PORT
+
+    try:
+        # Log informações de ambiente para debug
+        env_info = get_environment_info()
+        logging.info(f"[REDIS] Worker ambiente: {env_info['environment']}")
+        logging.info(f"[REDIS] Conectando ao Redis para carregar sessão {session_id}...")
+        logging.info(f"[REDIS] Host: {REDIS_HOST}, Port: {REDIS_PORT}")
+
+        # Usa DB 2 para sessões (mesmo do SessionManager)
+        redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=2, decode_responses=True)
+
+        # Testa conexão
+        redis_client.ping()
+        logging.info(f"[REDIS] Conexão com Redis estabelecida")
+
+        # Busca configuração da sessão no Redis
+        session_key = f"session:{session_id}"
+        logging.info(f"[REDIS] Buscando chave: {session_key}")
+        session_data = redis_client.get(session_key)
+
+        if not session_data:
+            logging.error(f"[REDIS] ❌ Configuração da sessão não encontrada: {session_id}")
+            logging.error(f"[REDIS] Chave buscada: {session_key}")
+            return None
+
+        # Deserializa configuração
+        logging.info(f"[REDIS] Dados encontrados, deserializando...")
+        session_config = json.loads(session_data)
+        logging.info(f"[REDIS] ✅ Configuração da sessão carregada para {session_id}: {list(session_config.keys())}")
+
+        return session_config
+
+    except Exception as e:
+        logging.error(f"[REDIS] Erro ao carregar configuração da sessão: {e}")
+        return None
+
+def save_session_config_to_redis(session_id: str, config: Dict[str, Any]) -> bool:
+    """
+    Salva configuração da sessão no Redis
+
+    Args:
+        session_id: ID da sessão
+        config: Configurações a serem salvas
+
+    Returns:
+        True se salvou com sucesso, False caso contrário
+    """
+    import redis
+    from utils.config import REDIS_HOST, REDIS_PORT
+
+    try:
+        # Log informações de ambiente para debug
+        env_info = get_environment_info()
+        logging.info(f"[REDIS] Worker ambiente: {env_info['environment']}")
+        logging.info(f"[REDIS] Salvando configuração para sessão {session_id}...")
+        logging.info(f"[REDIS] Host: {REDIS_HOST}, Port: {REDIS_PORT}")
+
+        # Usa DB 2 para sessões
+        redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=2, decode_responses=True)
+
+        # Serializa e salva configuração
+        session_key = f"session:{session_id}"
+        config_data = json.dumps(config, default=str)
+
+        redis_client.set(session_key, config_data)
+        logging.info(f"[REDIS] Configuração da sessão salva para {session_id}")
+
+        return True
+
+    except Exception as e:
+        logging.error(f"[REDIS] Erro ao salvar configuração da sessão: {e}")
+        return False
+
+def cleanup_session_cache(session_id: str) -> bool:
+    """
+    Remove cache de uma sessão específica
+
+    Args:
+        session_id: ID da sessão
+
+    Returns:
+        True se removido com sucesso
+    """
+    try:
+        removed_count = 0
+
+        # Remove cache de agentes da sessão
+        if session_id in _AGENT_REGISTRY:
+            removed_count += len(_AGENT_REGISTRY[session_id])
+            del _AGENT_REGISTRY[session_id]
+
+        # Remove cache de databases da sessão
+        if session_id in _DB_REGISTRY:
+            removed_count += len(_DB_REGISTRY[session_id])
+            del _DB_REGISTRY[session_id]
+
+        if removed_count > 0:
+            logging.info(f"[CACHE_CLEANUP] {removed_count} objetos removidos do cache da sessão {session_id}")
+
+        return True
+
+    except Exception as e:
+        logging.error(f"[CACHE_CLEANUP] Erro ao limpar cache da sessão {session_id}: {e}")
+        return False
+
+def get_cache_stats() -> Dict[str, Any]:
+    """
+    Retorna estatísticas do cache por sessão
+
+    Returns:
+        Dicionário com estatísticas
+    """
+    try:
+        stats = {
+            "total_sessions": len(_AGENT_REGISTRY),
+            "sessions": {}
+        }
+
+        for session_id in _AGENT_REGISTRY.keys():
+            agent_count = len(_AGENT_REGISTRY.get(session_id, {}))
+            db_count = len(_DB_REGISTRY.get(session_id, {}))
+
+            stats["sessions"][session_id] = {
+                "agents": agent_count,
+                "databases": db_count,
+                "total_objects": agent_count + db_count
+            }
+
+        return stats
+
+    except Exception as e:
+        logging.error(f"[CACHE_STATS] Erro ao obter estatísticas: {e}")
+        return {}
 
 def load_agent_config_from_redis(agent_id: str) -> Optional[Dict[str, Any]]:
     """
@@ -275,7 +626,7 @@ def load_agent_config_from_redis(agent_id: str) -> Optional[Dict[str, Any]]:
         logging.info(f"[REDIS] ✅ Configuração carregada para {agent_id}: {list(agent_config.keys())}")
 
         return agent_config
-        
+
     except Exception as e:
         logging.error(f"[REDIS] Erro ao carregar configuração: {e}")
         return None
@@ -316,124 +667,18 @@ def save_agent_config_to_redis(agent_id: str, config: Dict[str, Any]) -> bool:
         logging.error(f"[REDIS] Erro ao salvar configuração: {e}")
         return False
 
+# OBSOLETO: reconstrução por task foi substituída por cache por processo (_get_or_create_sql_agent)
+# Mantido por compatibilidade mas não utilizado no fluxo principal.
 def reconstruct_sql_agent(agent_config: Dict[str, Any]):
-    """
-    Reconstrói o SQL Agent baseado na configuração
+    logging.warning("[RECONSTRUCT] Função obsoleta chamada. Utilize o cache por processo.")
+    return _get_or_create_sql_agent(agent_config)
 
-    Args:
-        agent_config: Configurações do agente carregadas do Redis
-
-    Returns:
-        Instância do SQLAgentManager
-    """
-    from agents.sql_agent import SQLAgentManager
-    from utils.database import create_sql_database
-
-    try:
-        logging.info(f"[RECONSTRUCT] Reconstruindo agente SQL...")
-
-        connection_type = agent_config['connection_type']
-        selected_model = agent_config.get('selected_model', 'gpt-4o-mini')
-        top_k = agent_config.get('top_k', 10)
-
-        # Configurações do Processing Agent
-        processing_enabled = agent_config.get('processing_enabled', False)
-        processing_model = agent_config.get('processing_model', 'GPT-4o-mini')
-
-        # Configurações de refinamento
-        advanced_mode = agent_config.get('advanced_mode', False)
-
-        # Log simplificado das configurações
-        processing_status = "ATIVO" if processing_enabled else "DESATIVO"
-        refinement_status = "ATIVO" if advanced_mode else "DESATIVO"
-
-        logging.info(f"[RECONSTRUCT] Config: {selected_model} | {connection_type} | TOP_K={top_k} | Processing={processing_status} | Refinamento={refinement_status}")
-
-        # Log do contexto apenas se houver
-        sql_context = agent_config.get('sql_context', '')
-        if sql_context:
-            logging.info(f"[RECONSTRUCT] Contexto SQL recebido: {len(str(sql_context))} chars")
-
-        if connection_type == 'csv':
-            # Reconstruir para CSV
-            csv_path = agent_config['csv_path']
-
-            logging.info(f"[RECONSTRUCT] Criando agente CSV: {csv_path}")
-
-            # Verificar se arquivo existe
-            import os
-            if not os.path.exists(csv_path):
-                logging.error(f"[RECONSTRUCT] Arquivo CSV nao encontrado: {csv_path}")
-
-            # Criar engine e agente
-            engine = create_engine_from_csv(csv_path)
-            db = create_sql_database(engine)
-            sql_agent = SQLAgentManager(
-                db=db,
-                model_name=selected_model,
-                single_table_mode=False,
-                selected_table=None,
-                top_k=top_k
-            )
-            logging.info(f"[RECONSTRUCT] Agente CSV criado com sucesso")
-
-        elif connection_type == 'postgresql':
-            # Reconstruir para PostgreSQL
-            pg_config = agent_config['postgresql_config']
-            single_table_mode = agent_config.get('single_table_mode', False)
-            selected_table = agent_config.get('selected_table')
-
-            logging.info(f"[RECONSTRUCT] Criando agente PostgreSQL: {pg_config.get('host')}:{pg_config.get('port')}/{pg_config.get('database')}")
-
-            # Criar engine e agente
-            engine = create_engine_from_postgresql(pg_config)
-            db = create_sql_database(engine)
-            sql_agent = SQLAgentManager(
-                db=db,
-                model_name=selected_model,
-                single_table_mode=single_table_mode,
-                selected_table=selected_table,
-                top_k=top_k
-            )
-            logging.info(f"[RECONSTRUCT] Agente PostgreSQL criado com sucesso")
-
-        else:
-            raise Exception(f"Tipo de conexão não suportado: {connection_type}")
-
-        logging.info(f"[RECONSTRUCT] Agente reconstruido: {sql_agent.model_name} | TOP_K={sql_agent.top_k}")
-        return sql_agent
-
-    except Exception as e:
-        logging.error(f"[RECONSTRUCT] ❌ Erro ao reconstruir agente: {e}")
-        logging.error(f"[RECONSTRUCT] Configuração que causou erro: {agent_config}")
-        raise
-
+# OBSOLETO: leitura de CSV no worker não é mais suportada. Utilize db_uri persistido.
 def create_engine_from_csv(csv_path: str):
     """
-    Cria engine SQLite a partir de arquivo CSV
-
-    Args:
-        csv_path: Caminho para o arquivo CSV
-
-    Returns:
-        Engine SQLAlchemy
+    [OBSOLETO] Cria engine SQLite a partir de arquivo CSV. Não utilizar no worker.
     """
-    try:
-        # Lê CSV
-        df = pd.read_csv(csv_path, sep=';')
-
-        # Cria engine SQLite em memória
-        engine = create_engine('sqlite:///:memory:')
-
-        # Carrega dados na tabela
-        df.to_sql('tabela', engine, index=False, if_exists='replace')
-
-        logging.info(f"[CSV_ENGINE] Engine criada com {len(df)} registros")
-        return engine
-
-    except Exception as e:
-        logging.error(f"[CSV_ENGINE] Erro ao criar engine: {e}")
-        raise
+    raise RuntimeError("Leitura de CSV no worker desabilitada. Realize a ingestão (CSV->SQLite) no app e passe db_uri.")
 
 def create_engine_from_postgresql(pg_config: Dict[str, Any]):
     """
