@@ -83,9 +83,9 @@ else:
         # Task tracking
         task_track_started=True,
 
-        # Timeouts padrão
-        task_time_limit=30 * 60,  # 30 minutos
-        task_soft_time_limit=25 * 60,  # 25 minutos
+        # Timeouts estendidos para produção
+        task_time_limit=60 * 60,  # 60 minutos (1 hora)
+        task_soft_time_limit=55 * 60,  # 55 minutos
 
         # Worker configuration
         worker_prefetch_multiplier=1,
@@ -99,7 +99,7 @@ else:
         # Result backend
         result_expires=24 * 60 * 60,  # Resultados expiram em 24h
     )
-    logging.info("[CELERY_CONFIG] Configuração Windows padrão aplicada (30min timeout)")
+    logging.info("[CELERY_CONFIG] Configuração Windows estendida aplicada (60min timeout)")
 
 # Log configuração aplicada
 env_info = get_environment_info()

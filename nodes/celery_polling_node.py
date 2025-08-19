@@ -107,9 +107,9 @@ async def celery_task_dispatch_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
         logging.info(f"[CELERY_DISPATCH] Task {task_id} disparada para sessão {session_id}, aguardando resultado...")
 
-        # Aguardar resultado direto (timeout de 5 minutos)
+        # Aguardar resultado direto (timeout de 15 minutos para produção)
         try:
-            result = task.get(timeout=300)
+            result = task.get(timeout=900)
 
             logging.info(f"[CELERY_DISPATCH] ✅ Task concluída com sucesso!")
 
@@ -186,9 +186,9 @@ async def celery_task_polling_node(state: Dict[str, Any]) -> Dict[str, Any]:
         dispatch_time = state.get('celery_dispatch_time', time.time())
         elapsed_time = time.time() - dispatch_time
 
-        # Timeout de 2 minutos ou máximo 20 tentativas (com sleep de 3s = ~1 minuto)
-        MAX_POLLING_ATTEMPTS = 20
-        MAX_TIMEOUT_SECONDS = 120
+        # Timeout de 10 minutos ou máximo 100 tentativas (com sleep de 3s = ~5 minutos)
+        MAX_POLLING_ATTEMPTS = 100
+        MAX_TIMEOUT_SECONDS = 600
 
         if polling_count > MAX_POLLING_ATTEMPTS or elapsed_time > MAX_TIMEOUT_SECONDS:
             timeout_msg = f"Timeout na task Celery após {polling_count} tentativas ({elapsed_time:.1f}s)"
