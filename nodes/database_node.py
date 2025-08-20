@@ -193,14 +193,23 @@ async def get_database_sample_node(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         obj_manager = get_object_manager()
         
-        # Recupera engine
+        # Recupera engine POR SESSÃO
         engine_id = state.get("engine_id")
+        session_id = state.get("session_id")
+
         if not engine_id:
             raise ValueError("ID da engine não encontrado")
-        
-        engine = obj_manager.get_engine(engine_id)
+
+        if not session_id:
+            raise ValueError("Session ID não encontrado")
+
+        # Tenta pegar engine da sessão primeiro, depois global como fallback
+        engine = obj_manager.get_engine_session(session_id, engine_id)
         if not engine:
-            raise ValueError("Engine não encontrada")
+            # Fallback para engine global (compatibilidade)
+            engine = obj_manager.get_engine(engine_id)
+            if not engine:
+                raise ValueError(f"Engine {engine_id} não encontrada para sessão {session_id}")
         
         # Determina qual tabela usar para amostra
         connection_type = state.get("connection_type", "csv")

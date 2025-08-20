@@ -202,10 +202,14 @@ async def validate_system_node(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         obj_manager = get_object_manager()
         
-        # Valida banco de dados
+        # Valida banco de dados (POR SESSÃO)
         engine_id = state.get("engine_id")
+        session_id = state.get("session_id")
         if engine_id:
-            engine = obj_manager.get_engine(engine_id)
+            if session_id:
+                engine = obj_manager.get_engine_session(session_id, engine_id)
+            else:
+                engine = obj_manager.get_engine(engine_id)
             if engine:
                 try:
                     # Testa conexão básica

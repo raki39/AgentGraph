@@ -291,15 +291,25 @@ async def prepare_query_context_node(state: Dict[str, Any]) -> Dict[str, Any]:
         
         obj_manager = get_object_manager()
         
-        # Verifica se objetos existem
+        # Verifica se objetos existem (POR SESSÃO)
+        session_id = state.get("session_id")
         for id_name in required_ids:
             obj_id = state[id_name]
             if id_name == "agent_id":
-                obj = obj_manager.get_sql_agent(obj_id)
+                if session_id:
+                    obj = obj_manager.get_sql_agent_session(session_id, obj_id)
+                else:
+                    obj = obj_manager.get_sql_agent(obj_id)
             elif id_name == "engine_id":
-                obj = obj_manager.get_engine(obj_id)
+                if session_id:
+                    obj = obj_manager.get_engine_session(session_id, obj_id)
+                else:
+                    obj = obj_manager.get_engine(obj_id)
             elif id_name == "cache_id":
-                obj = obj_manager.get_cache_manager(obj_id)
+                if session_id:
+                    obj = obj_manager.get_cache_manager_session(session_id, obj_id)
+                else:
+                    obj = obj_manager.get_cache_manager(obj_id)
             
             if obj is None:
                 raise ValueError(f"Objeto não encontrado para {id_name}: {obj_id}")

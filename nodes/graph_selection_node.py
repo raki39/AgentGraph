@@ -50,9 +50,15 @@ async def graph_selection_node(state: Dict[str, Any]) -> Dict[str, Any]:
             state.update({"graph_error": "SQL query não encontrada", "graph_generated": False})
             return state
 
-        # 3. Obter dados
+        # 3. Obter dados (POR SESSÃO)
         obj_manager = get_object_manager()
-        engine = obj_manager.get_engine(state.get("engine_id"))
+        session_id = state.get("session_id")
+        engine_id = state.get("engine_id")
+
+        if session_id:
+            engine = obj_manager.get_engine_session(session_id, engine_id)
+        else:
+            engine = obj_manager.get_engine(engine_id)
         if not engine:
             logging.error("[GRAPH_SELECTION_NEW] ❌ Engine não encontrada")
             state.update({"graph_error": "Engine não encontrada", "graph_generated": False})

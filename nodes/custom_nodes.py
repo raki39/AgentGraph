@@ -128,7 +128,7 @@ async def reset_system_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if not db_result["success"]:
             raise Exception(db_result["message"])
 
-        # Recupera objetos criados
+        # Recupera objetos criados (GLOBAL - este é um reset do sistema)
         engine = obj_manager.get_engine(db_result["engine_id"])
         db = obj_manager.get_object(db_result["db_id"])
 

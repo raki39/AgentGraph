@@ -73,9 +73,15 @@ async def process_initial_context_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     logging.error("[PROCESSING NODE] Nenhum engine ou database disponível no ObjectManager")
                     return state
 
-            # Obtém engine e database específicos do estado atual
-            engine = obj_manager.get_engine(engine_id)
-            database = obj_manager.get_database(db_id)
+            # Obtém engine e database específicos da SESSÃO
+            session_id = state.get("session_id")
+            if session_id:
+                engine = obj_manager.get_engine_session(session_id, engine_id)
+                database = obj_manager.get_database_session(session_id, db_id)
+            else:
+                # Fallback para global
+                engine = obj_manager.get_engine(engine_id)
+                database = obj_manager.get_database(db_id)
 
             logging.info(f"[PROCESSING NODE] Engine obtido: {engine is not None}")
             logging.info(f"[PROCESSING NODE] Database obtido: {database is not None}")
